@@ -30,13 +30,15 @@
 		"prepublishOnly": "bun run build",
 		"check-types": "tsc --noEmit",
 		"check": "biome check --write --unsafe",
-		"test": "bun test"
+		"test": "bun test",
+		"bench": "bun run benchmarks/run.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.4.3",
 		"@types/bun": "latest",
 		"@types/lodash": "4.17.23",
-		"lefthook": "^2.1.1"
+		"lefthook": "^2.1.1",
+		"mitata": "^1.0.34"
 	},
 	"peerDependencies": {
 		"typescript": "^5"
