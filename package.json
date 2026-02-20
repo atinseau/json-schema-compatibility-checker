@@ -8,10 +8,12 @@
 		"url": "https://github.com/atinseau/json-schema-compatibility-checker",
 		"name": "atinseau"
 	},
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
 	"type": "module",
 	"scripts": {
 		"postinstall": "lefthook install",
-		"build:bun": "bun build src/index.ts --outdir ./dist --sourcemap --splitting --target node --format esm --packages external",
+		"build:bun": "bun build src/*.ts --outdir ./dist --production --minify --root src --sourcemap --splitting --target node --format esm --packages external --chunk-naming='chunk-[hash].js'",
 		"build:tsc": "tsc --project tsconfig.build.json",
 		"build": "bun --parallel build:bun build:tsc",
 		"check-types": "tsc --noEmit",
