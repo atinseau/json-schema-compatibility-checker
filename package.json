@@ -11,11 +11,23 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"type": "module",
+	"sideEffects": false,
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
 	"scripts": {
 		"postinstall": "lefthook install",
 		"build:bun": "bun build src/*.ts --outdir ./dist --production --minify --root src --sourcemap --splitting --target node --format esm --packages external --chunk-naming='chunk-[hash].js'",
 		"build:tsc": "tsc --project tsconfig.build.json",
 		"build": "bun --parallel build:bun build:tsc",
+		"prepublishOnly": "bun run build",
 		"check-types": "tsc --noEmit",
 		"check": "biome check --write --unsafe",
 		"test": "bun test"
