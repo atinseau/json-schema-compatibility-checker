@@ -1,0 +1,30 @@
+{
+  "name": "json-schema-compatibility-checker",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "postinstall": "lefthook install",
+    "build:bun": "bun build src/index.ts --production --target node --outdir dist --sourcemap --splitting --format esm --packages external",
+    "build:tsc": "tsc --project tsconfig.build.json",
+    "build": "bun --parallel build:bun build:tsc",
+    "check-types": "tsc --noEmit",
+    "check": "biome check --write --unsafe",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.3",
+    "@types/bun": "latest",
+    "@types/lodash": "4.17.23",
+    "lefthook": "^2.1.1"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@x0k/json-schema-merge": "1.0.2",
+    "class-validator": "0.14.3",
+    "lodash": "4.17.23",
+    "randexp": "0.5.3"
+  }
+}
