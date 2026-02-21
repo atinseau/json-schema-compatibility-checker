@@ -88,14 +88,22 @@ export class JsonSchemaCompatibilityChecker {
 		// This avoids the entire normalize + merge + compare pipeline.
 		if (sub === sup) return true;
 
+		// ── Pre-normalize structural equality ──
+		// If sub and sup are structurally identical before normalization,
+		// they represent the same schema → sub ⊆ sup trivially.
+		// This avoids the WeakMap overhead of normalize() for common cases
+		// like {} ⊆ {} or identical schema objects with different references.
+		if (deepEqual(sub, sup)) return true;
+
 		const nSub = normalize(sub);
 		const nSup = normalize(sup);
 
-		// ── Structural identity short-circuit ──
-		// After normalization, if the two schemas are structurally equal,
-		// sub ⊆ sup without needing a merge. Uses deepEqual which has
-		// optimized fast paths (reference equality, key count check).
-		if (deepEqual(nSub, nSup)) return true;
+		// ── Post-normalize structural identity ──
+		// After normalization, schemas that were syntactically different
+		// but semantically equivalent become structurally equal
+		// (e.g. {const:1} vs {const:1, type:"integer"}).
+		if (nSub !== sub && nSup !== sup && deepEqual(nSub, nSup)) return true;
+		if (nSub !== nSup && deepEqual(nSub, nSup)) return true;
 
 		const { branches: subBranches } = getBranchesTyped(nSub);
 
@@ -124,13 +132,17 @@ export class JsonSchemaCompatibilityChecker {
 			return { isSubset: true, merged: sub, diffs: [] };
 		}
 
+		// ── Pre-normalize structural equality ──
+		// Avoids WeakMap overhead for identical schemas ({} ⊆ {}, etc.).
+		if (deepEqual(sub, sup)) {
+			return { isSubset: true, merged: sub, diffs: [] };
+		}
+
 		const nSub = normalize(sub);
 		const nSup = normalize(sup);
 
-		// ── Structural identity short-circuit ──
-		// Normalized schemas are equal → subset with no diffs.
-		// Uses deepEqual for faster comparison with reference equality
-		// short-circuit and key count check.
+		// ── Post-normalize structural identity ──
+		// Catches semantically equivalent schemas after normalization.
 		if (deepEqual(nSub, nSup)) {
 			return { isSubset: true, merged: nSub, diffs: [] };
 		}
@@ -192,8 +204,23 @@ export class JsonSchemaCompatibilityChecker {
 		a: JSONSchema7Definition,
 		b: JSONSchema7Definition,
 	): JSONSchema7Definition | null {
-		const merged = this.engine.merge(normalize(a), normalize(b));
-		return merged !== null ? normalize(merged) : null;
+		// ── Identity short-circuit ──
+		// If a and b are the same reference or structurally equal,
+		// intersection is just normalize(a) — skip the merge entirely.
+		if (a === b || deepEqual(a, b)) return normalize(a);
+
+		const nA = normalize(a);
+		const nB = normalize(b);
+
+		// ── Post-normalize identity ──
+		if (deepEqual(nA, nB)) return nA;
+
+		const merged = this.engine.merge(nA, nB);
+		if (merged === null) return null;
+		// Fast path: if merge result equals one of the normalized inputs,
+		// it's already normalized — skip redundant normalize call.
+		if (deepEqual(merged, nA) || deepEqual(merged, nB)) return merged;
+		return normalize(merged);
 	}
 
 	// ── Condition resolution ───────────────────────────────────────────────

@@ -58,6 +58,14 @@ const BRANCH_TRUE: BranchResult = { branches: [true], type: "none" };
 const BRANCH_FALSE: BranchResult = { branches: [false], type: "none" };
 
 /**
+ * WeakMap cache for atomic (no anyOf/oneOf) schema branch results.
+ * Avoids allocating `{ branches: [def], type: "none" }` on every call
+ * for the same schema object. Since normalized schemas are cached and
+ * return the same reference, this cache hits frequently.
+ */
+const atomicBranchCache = new WeakMap<object, BranchResult>();
+
+/**
  * Extrait les branches d'un schema et le type de branchement.
  *
  * Retourne les éléments de `anyOf`/`oneOf` s'ils existent, sinon retourne
@@ -66,7 +74,8 @@ const BRANCH_FALSE: BranchResult = { branches: [false], type: "none" };
  * Point 6 — Distingue `anyOf` de `oneOf` dans les paths de diff.
  *
  * Optimisation : réutilise des objets pré-alloués pour les cas boolean
- * (true/false) afin d'éviter les allocations sur ces chemins fréquents.
+ * (true/false) et un WeakMap cache pour les schemas atomiques afin
+ * d'éviter les allocations sur ces chemins fréquents.
  */
 export function getBranchesTyped(def: JSONSchema7Definition): BranchResult {
 	if (typeof def === "boolean") {
@@ -78,7 +87,13 @@ export function getBranchesTyped(def: JSONSchema7Definition): BranchResult {
 	if (hasOwn(def, "oneOf") && Array.isArray(def.oneOf)) {
 		return { branches: def.oneOf, type: "oneOf" };
 	}
-	return { branches: [def], type: "none" };
+	// Cache atomic results per schema object to avoid repeated allocations.
+	let cached = atomicBranchCache.get(def);
+	if (cached === undefined) {
+		cached = { branches: [def], type: "none" };
+		atomicBranchCache.set(def, cached);
+	}
+	return cached;
 }
 
 // ─── `not` reasoning (Point 7 — étendu) ─────────────────────────────────────
@@ -681,10 +696,12 @@ export function isAtomicSubsetOf(
 
 		const merged = engine.merge(sub, effectiveSup);
 		if (merged === null) return false;
-		// Normalise le résultat du merge pour éliminer les artefacts
-		// structurels (ex: enum redondant quand const est présent).
-		// Fast path: deepEqual has reference equality + key count short-circuit.
-		// Fallback: engine.isEqual handles semantic equivalences (type arrays, enum ordering).
+		// Fast path: if merged is already structurally equal to sub,
+		// skip normalize entirely. This is the common case when sub ⊆ sup
+		// (A ∩ B = A), saving O(n) normalize traversal on wide schemas.
+		if (deepEqual(merged, sub)) return true;
+		// Slow path: normalize to eliminate merge artifacts (e.g. redundant
+		// enum when const is present), then compare.
 		const normalizedMerged = normalize(merged);
 		return (
 			deepEqual(normalizedMerged, sub) || engine.isEqual(normalizedMerged, sub)
@@ -733,6 +750,8 @@ export function isAtomicSubsetOf(
 
 		const merged = engine.merge(sub, effectiveBranch);
 		if (merged === null) return false;
+		// Fast path: skip normalize if merged already equals sub
+		if (deepEqual(merged, sub)) return true;
 		const normalizedBranch = normalize(merged);
 		return (
 			deepEqual(normalizedBranch, sub) || engine.isEqual(normalizedBranch, sub)
@@ -810,6 +829,10 @@ export function checkBranchedSup(
 		}
 		const merged = engine.merge(sub, effectiveBranch);
 		if (merged !== null) {
+			// Fast path: skip normalize if merged already equals sub
+			if (deepEqual(merged, sub)) {
+				return { isSubset: true, merged, diffs: [] };
+			}
 			const normalizedMerged = normalize(merged);
 			if (
 				deepEqual(normalizedMerged, sub) ||
@@ -859,6 +882,12 @@ export function checkAtomic(
 
 	try {
 		const merged = engine.mergeOrThrow(sub, effectiveSup);
+
+		// Fast path: skip normalize if merged already equals sub
+		if (deepEqual(merged, sub)) {
+			return { isSubset: true, merged, diffs: [] };
+		}
+
 		const normalizedMerged = normalize(merged);
 
 		if (
