@@ -50,8 +50,7 @@ export function deepEqual(a: unknown, b: unknown): boolean {
 		const aKeys = Object.keys(aObj);
 		const bKeys = Object.keys(bObj);
 		if (aKeys.length !== bKeys.length) return false;
-		for (let i = 0; i < aKeys.length; i++) {
-			const key = aKeys[i]!;
+		for (const key of aKeys) {
 			if (!(key in bObj) || !deepEqual(aObj[key], bObj[key])) return false;
 		}
 		return true;

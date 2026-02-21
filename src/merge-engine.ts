@@ -159,7 +159,10 @@ function hasDeepConstConflict(
 		const bItems = b.items as JSONSchema7Definition[];
 		const len = Math.min(aItems.length, bItems.length);
 		for (let i = 0; i < len; i++) {
-			if (hasDeepConstConflict(aItems[i]!, bItems[i]!)) {
+			const aItem = aItems[i];
+			const bItem = bItems[i];
+			if (aItem === undefined || bItem === undefined) continue;
+			if (hasDeepConstConflict(aItem, bItem)) {
 				return true;
 			}
 		}

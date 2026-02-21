@@ -105,7 +105,8 @@ function normalizePropertiesMap(
 	const result: Record<string, JSONSchema7Definition> = {};
 
 	for (let i = 0; i < keys.length; i++) {
-		const key = keys[i]!;
+		const key = keys[i];
+		if (key === undefined) continue;
 		const original = props[key];
 		const normalized = normalize(original as JSONSchema7Definition);
 		result[key] = normalized;
@@ -239,7 +240,8 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		const newDeps: Record<string, JSONSchema7Definition | string[]> = {};
 
 		for (let i = 0; i < depsKeys.length; i++) {
-			const key = depsKeys[i]!;
+			const key = depsKeys[i];
+			if (key === undefined) continue;
 			const val = deps[key];
 			if (val === undefined) continue;
 			if (Array.isArray(val)) {
@@ -269,7 +271,8 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 			const newItems: JSONSchema7Definition[] = new Array(items.length);
 
 			for (let i = 0; i < items.length; i++) {
-				const original = items[i]!;
+				const original = items[i];
+				if (original === undefined) continue;
 				const normalized = normalize(original);
 				newItems[i] = normalized;
 				if (normalized !== original) itemsChanged = true;
@@ -293,7 +296,7 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		if (val !== undefined && typeof val !== "boolean") {
 			const normalized = normalize(val as JSONSchema7Definition);
 			if (normalized !== val) {
-				schema[key] = normalized as any;
+				(schema as Record<string, JSONSchema7Definition>)[key] = normalized;
 			}
 		}
 	}
@@ -326,7 +329,8 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 			// Fusionner le contenu interne dans le schema courant
 			const innerKeys = Object.keys(innerSchema);
 			for (let i = 0; i < innerKeys.length; i++) {
-				const ik = innerKeys[i]!;
+				const ik = innerKeys[i];
+				if (ik === undefined) continue;
 				(schema as Record<string, unknown>)[ik] = (
 					innerSchema as Record<string, unknown>
 				)[ik];
@@ -343,7 +347,8 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 			const newArr: JSONSchema7Definition[] = new Array(arr.length);
 
 			for (let i = 0; i < arr.length; i++) {
-				const original = arr[i]!;
+				const original = arr[i];
+				if (original === undefined) continue;
 				const normalized = normalize(original);
 				newArr[i] = normalized;
 				if (normalized !== original) arrChanged = true;
