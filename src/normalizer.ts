@@ -10,9 +10,19 @@ import { deepEqual, hasOwn, isPlainObj } from "./utils";
 //   - Récurser dans `patternProperties` (Point 2)
 //   - Récurser dans `dependencies` forme schema (Point 3)
 //
-// Utilise des méthodes natives JS pour des performances optimales.
-// Les mutations sont faites in-place sur une copie shallow du schema d'entrée
-// pour éviter les allocations inutiles de spreads répétés.
+// Optimisations :
+//   - WeakMap cache pour éviter de re-normaliser le même objet
+//   - Lazy copy-on-write : ne crée une copie que si des mutations sont nécessaires
+//   - Retourne l'original si rien n'a changé (évite les allocations)
+
+// ─── Normalization Cache ─────────────────────────────────────────────────────
+
+/**
+ * Cache WeakMap pour les résultats de normalisation.
+ * Évite de re-normaliser le même objet schema plusieurs fois.
+ * WeakMap permet au GC de collecter les schemas qui ne sont plus référencés.
+ */
+const normalizeCache = new WeakMap<object, JSONSchema7Definition>();
 
 // ─── Type inference ──────────────────────────────────────────────────────────
 
@@ -102,18 +112,30 @@ function normalizePropertiesMap(
 ): Record<string, JSONSchema7Definition> {
 	const keys = Object.keys(props);
 	let changed = false;
-	const result: Record<string, JSONSchema7Definition> = {};
 
+	// First pass: detect if anything changes (sub-schemas get cached)
 	for (let i = 0; i < keys.length; i++) {
 		const key = keys[i];
 		if (key === undefined) continue;
 		const original = props[key];
 		const normalized = normalize(original as JSONSchema7Definition);
-		result[key] = normalized;
-		if (normalized !== original) changed = true;
+		if (normalized !== original) {
+			changed = true;
+			break;
+		}
 	}
 
-	return changed ? result : props;
+	if (!changed) return props;
+
+	// Build result only when something changed (sub normalize calls hit cache)
+	const result: Record<string, JSONSchema7Definition> = {};
+	for (let i = 0; i < keys.length; i++) {
+		const key = keys[i];
+		if (key === undefined) continue;
+		result[key] = normalize(props[key] as JSONSchema7Definition);
+	}
+
+	return result;
 }
 
 /**
@@ -166,27 +188,44 @@ function inferTypeFromEnum(
  *   - Mots-clés single-schema (`additionalProperties`, `not`, `if`, etc.)
  *   - Mots-clés array-of-schema (`anyOf`, `oneOf`, `allOf`)
  *
- * Optimisation : on fait une seule copie shallow au début, puis on mute
- * in-place au lieu de créer un nouvel objet à chaque modification.
- * Les sous-structures (properties, items, etc.) ne sont remplacées
- * que si elles ont effectivement changé.
+ * Optimisations :
+ *   - WeakMap cache : retourne le résultat mis en cache en O(1)
+ *   - Lazy copy-on-write : ne crée une copie shallow que quand la première
+ *     mutation est nécessaire, via `ensureCopy()`
+ *   - Les sous-structures ne sont remplacées que si effectivement changées
  */
 export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 	if (typeof def === "boolean") return def;
 
-	// Single shallow copy — all mutations happen on this object
-	const schema = { ...def } as JSONSchema7 & Record<string, unknown>;
+	// ── Cache lookup (O(1) fast path) ──
+	const cached = normalizeCache.get(def);
+	if (cached !== undefined) return cached;
+
+	// ── Lazy copy-on-write ──
+	// We delay creating a shallow copy until the first actual mutation.
+	// `schema` starts as `def` and only becomes a copy when `ensureCopy()` is called.
+	let schema = def as JSONSchema7 & Record<string, unknown>;
+	let copied = false;
+
+	function ensureCopy(): JSONSchema7 & Record<string, unknown> {
+		if (!copied) {
+			schema = { ...(def as JSONSchema7) } as JSONSchema7 &
+				Record<string, unknown>;
+			copied = true;
+		}
+		return schema;
+	}
 
 	// ── Inférer type depuis const ──
 	const typeFromConst = inferTypeFromConst(schema);
 	if (typeFromConst) {
-		schema.type = typeFromConst;
+		ensureCopy().type = typeFromConst;
 	}
 
 	// ── Inférer type depuis enum ──
 	const typeFromEnum = inferTypeFromEnum(schema);
 	if (typeFromEnum) {
-		schema.type = typeFromEnum;
+		ensureCopy().type = typeFromEnum;
 	}
 
 	// ── Convertir enum à un seul élément en const ──
@@ -199,8 +238,9 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		schema.enum.length === 1 &&
 		!hasOwn(schema, "const")
 	) {
-		schema.const = schema.enum[0];
-		delete schema.enum;
+		const s = ensureCopy();
+		s.const = schema.enum[0];
+		delete s.enum;
 	}
 
 	// ── Strip redundant enum when const is present ──
@@ -209,7 +249,7 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 	// cette combinaison lors de l'intersection const ∩ enum.
 	if (hasOwn(schema, "const") && Array.isArray(schema.enum)) {
 		if (schema.enum.some((v) => deepEqual(v, schema.const))) {
-			delete schema.enum;
+			delete ensureCopy().enum;
 		}
 	}
 
@@ -221,7 +261,7 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 				val as Record<string, JSONSchema7Definition>,
 			);
 			if (normalized !== val) {
-				schema[keyword] = normalized as JSONSchema7["properties"];
+				ensureCopy()[keyword] = normalized as JSONSchema7["properties"];
 			}
 		}
 	}
@@ -258,7 +298,7 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		}
 
 		if (depsChanged) {
-			schema.dependencies = newDeps;
+			ensureCopy().dependencies = newDeps;
 		}
 	}
 
@@ -279,13 +319,13 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 			}
 
 			if (itemsChanged) {
-				schema.items = newItems;
+				ensureCopy().items = newItems;
 			}
 		} else if (isPlainObj(schema.items)) {
 			// Single items schema
 			const normalized = normalize(schema.items as JSONSchema7Definition);
 			if (normalized !== schema.items) {
-				schema.items = normalized;
+				ensureCopy().items = normalized;
 			}
 		}
 	}
@@ -296,7 +336,8 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		if (val !== undefined && typeof val !== "boolean") {
 			const normalized = normalize(val as JSONSchema7Definition);
 			if (normalized !== val) {
-				(schema as Record<string, JSONSchema7Definition>)[key] = normalized;
+				(ensureCopy() as Record<string, JSONSchema7Definition>)[key] =
+					normalized;
 			}
 		}
 	}
@@ -324,14 +365,15 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		) {
 			// Extraire le contenu de not.not et le fusionner avec le reste du schema
 			const innerSchema = notSchema.not as JSONSchema7;
+			const s = ensureCopy();
 			// Retirer `not` du schema courant
-			delete schema.not;
+			delete s.not;
 			// Fusionner le contenu interne dans le schema courant
 			const innerKeys = Object.keys(innerSchema);
 			for (let i = 0; i < innerKeys.length; i++) {
 				const ik = innerKeys[i];
 				if (ik === undefined) continue;
-				(schema as Record<string, unknown>)[ik] = (
+				(s as Record<string, unknown>)[ik] = (
 					innerSchema as Record<string, unknown>
 				)[ik];
 			}
@@ -355,10 +397,18 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 			}
 
 			if (arrChanged) {
-				schema[key] = newArr;
+				ensureCopy()[key] = newArr;
 			}
 		}
 	}
 
-	return schema as JSONSchema7Definition;
+	// ── Determine result ──
+	// If nothing changed (copied === false), return the original def.
+	// Otherwise, return the mutated copy.
+	const result = (copied ? schema : def) as JSONSchema7Definition;
+
+	// ── Cache the result ──
+	normalizeCache.set(def, result);
+
+	return result;
 }

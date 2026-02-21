@@ -112,12 +112,27 @@ function evaluateNumericConstraints(value: number, prop: JSONSchema7): boolean {
  * Évalue une contrainte string sur une valeur.
  * Point 5 — Enrichissement de evaluateCondition.
  */
+/** Cache for compiled RegExp patterns used in evaluateStringConstraints */
+const patternRegexCache = new Map<string, RegExp>();
+
+function getOrCompileRegex(pattern: string): RegExp {
+	let regex = patternRegexCache.get(pattern);
+	if (regex === undefined) {
+		regex = new RegExp(pattern);
+		patternRegexCache.set(pattern, regex);
+	}
+	return regex;
+}
+
 function evaluateStringConstraints(value: string, prop: JSONSchema7): boolean {
 	if (prop.minLength !== undefined && !(value.length >= prop.minLength))
 		return false;
 	if (prop.maxLength !== undefined && !(value.length <= prop.maxLength))
 		return false;
-	if (prop.pattern !== undefined && !new RegExp(prop.pattern).test(value))
+	if (
+		prop.pattern !== undefined &&
+		!getOrCompileRegex(prop.pattern).test(value)
+	)
 		return false;
 	return true;
 }
@@ -136,10 +151,13 @@ function evaluateArrayConstraints(
 		return false;
 	if (prop.uniqueItems === true) {
 		// Vérifier l'unicité via deepEqual pour les éléments non-primitifs
-		const isUnique = value.every((item, idx) =>
-			value.slice(idx + 1).every((other) => !deepEqual(item, other)),
-		);
-		if (!isUnique) return false;
+		// Optimisation : double boucle sans slice pour éviter les allocations
+		const len = value.length;
+		for (let i = 0; i < len; i++) {
+			for (let j = i + 1; j < len; j++) {
+				if (deepEqual(value[i], value[j])) return false;
+			}
+		}
 	}
 	return true;
 }
@@ -755,7 +773,5 @@ function resolveNestedProperties(
 		changed = true;
 	}
 
-	return changed
-		? { ...resolved, properties: resolvedProps }
-		: { ...resolved, properties: props };
+	return changed ? { ...resolved, properties: resolvedProps } : resolved;
 }

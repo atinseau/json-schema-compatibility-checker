@@ -52,6 +52,11 @@ export interface BranchResult {
 
 // ─── Branch extraction ───────────────────────────────────────────────────────
 
+// Pre-allocated singleton results for boolean schemas to avoid per-call allocations.
+// These are safe because the branches arrays are never mutated after creation.
+const BRANCH_TRUE: BranchResult = { branches: [true], type: "none" };
+const BRANCH_FALSE: BranchResult = { branches: [false], type: "none" };
+
 /**
  * Extrait les branches d'un schema et le type de branchement.
  *
@@ -59,10 +64,13 @@ export interface BranchResult {
  * le schema lui-même dans un tableau avec type `"none"`.
  *
  * Point 6 — Distingue `anyOf` de `oneOf` dans les paths de diff.
+ *
+ * Optimisation : réutilise des objets pré-alloués pour les cas boolean
+ * (true/false) afin d'éviter les allocations sur ces chemins fréquents.
  */
 export function getBranchesTyped(def: JSONSchema7Definition): BranchResult {
 	if (typeof def === "boolean") {
-		return { branches: [def], type: "none" };
+		return def ? BRANCH_TRUE : BRANCH_FALSE;
 	}
 	if (hasOwn(def, "anyOf") && Array.isArray(def.anyOf)) {
 		return { branches: def.anyOf, type: "anyOf" };
@@ -463,22 +471,35 @@ function stripPatternFromSup(
 ): JSONSchema7Definition {
 	if (typeof sub === "boolean" || typeof sup === "boolean") return sup;
 
-	let result = { ...sup } as JSONSchema7;
+	const supObj: JSONSchema7 = sup;
+
+	// Lazy copy-on-write: only create a copy when the first mutation is needed.
+	let result: JSONSchema7 = supObj;
+	let copied = false;
+
+	function ensureCopy(): JSONSchema7 {
+		if (!copied) {
+			result = { ...supObj };
+			copied = true;
+		}
+		return result;
+	}
 
 	// ── Top-level pattern ──
 	if (
 		hasOwn(result, "pattern") &&
 		hasOwn(sub, "pattern") &&
-		result.pattern !== sub.pattern
+		result.pattern !== (sub as JSONSchema7).pattern
 	) {
 		const patResult = isPatternSubset(
-			sub.pattern as string,
+			(sub as JSONSchema7).pattern as string,
 			result.pattern as string,
 		);
 		if (patResult === true) {
-			result = omitKeys(result as unknown as Record<string, unknown>, [
+			result = omitKeys(ensureCopy() as unknown as Record<string, unknown>, [
 				"pattern",
 			]) as JSONSchema7;
+			copied = true;
 		}
 	}
 
@@ -493,7 +514,7 @@ function stripPatternFromSup(
 		>;
 		const supProps = result.properties as Record<string, JSONSchema7Definition>;
 		let propsModified = false;
-		const newProps: Record<string, JSONSchema7Definition> = { ...supProps };
+		let newProps: Record<string, JSONSchema7Definition> | undefined;
 
 		for (const key of Object.keys(supProps)) {
 			const supPropDef = supProps[key];
@@ -512,6 +533,7 @@ function stripPatternFromSup(
 					(supPropDef as JSONSchema7).pattern as string,
 				);
 				if (propPatResult === true) {
+					if (!newProps) newProps = { ...supProps };
 					newProps[key] = omitKeys(
 						supPropDef as unknown as Record<string, unknown>,
 						["pattern"],
@@ -521,8 +543,8 @@ function stripPatternFromSup(
 			}
 		}
 
-		if (propsModified) {
-			result = { ...result, properties: newProps };
+		if (propsModified && newProps) {
+			ensureCopy().properties = newProps;
 		}
 	}
 
@@ -545,12 +567,10 @@ function stripPatternFromSup(
 				supItems.pattern as string,
 			);
 			if (itemsPatResult === true) {
-				result = {
-					...result,
-					items: omitKeys(supItems as unknown as Record<string, unknown>, [
-						"pattern",
-					]) as JSONSchema7Definition,
-				};
+				ensureCopy().items = omitKeys(
+					supItems as unknown as Record<string, unknown>,
+					["pattern"],
+				) as JSONSchema7Definition;
 			}
 		}
 	}
