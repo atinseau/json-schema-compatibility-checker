@@ -612,12 +612,37 @@ export function resolveConditions(
 	data: Record<string, unknown>,
 	engine: MergeEngine,
 ): ResolvedConditionResult {
-	let resolved = { ...schema };
 	let branch: "then" | "else" | null = null;
 	const discriminant: Record<string, unknown> = {};
 
+	// ── Fast path: no conditions at all ──
+	// If there's no `if` and no `allOf` with conditions, skip the copy entirely.
+	const hasTopLevelIf = schema.if !== undefined;
+	const hasAllOfConditions =
+		Array.isArray(schema.allOf) &&
+		schema.allOf.some(
+			(e) => typeof e !== "boolean" && hasOwn(e as object, "if"),
+		);
+
+	if (!hasTopLevelIf && !hasAllOfConditions) {
+		// Phase 3 only: check nested properties (resolveNestedProperties
+		// already returns the original if nothing changes)
+		const resolved = resolveNestedProperties(
+			schema,
+			data,
+			engine,
+			discriminant,
+		);
+		return { resolved, branch, discriminant };
+	}
+
+	// ── Copy-on-write: only copy when mutations are needed ──
+	let resolved = { ...schema };
+
 	// ── Phase 1 : Résoudre les if/then/else dans allOf ──
-	resolved = resolveAllOfConditions(resolved, data, engine, discriminant);
+	if (hasAllOfConditions) {
+		resolved = resolveAllOfConditions(resolved, data, engine, discriminant);
+	}
 
 	// ── Phase 2 : Résoudre le if/then/else de ce niveau ──
 	if (resolved.if !== undefined) {

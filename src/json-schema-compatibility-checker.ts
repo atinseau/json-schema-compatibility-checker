@@ -22,6 +22,7 @@ import type {
 	SchemaDiff,
 	SubsetResult,
 } from "./types";
+import { deepEqual } from "./utils";
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 
@@ -92,9 +93,9 @@ export class JsonSchemaCompatibilityChecker {
 
 		// ── Structural identity short-circuit ──
 		// After normalization, if the two schemas are structurally equal,
-		// sub ⊆ sup without needing a merge. Uses the engine's comparator
-		// which is faster than a full merge + compare cycle.
-		if (this.engine.isEqual(nSub, nSup)) return true;
+		// sub ⊆ sup without needing a merge. Uses deepEqual which has
+		// optimized fast paths (reference equality, key count check).
+		if (deepEqual(nSub, nSup)) return true;
 
 		const { branches: subBranches } = getBranchesTyped(nSub);
 
@@ -128,7 +129,9 @@ export class JsonSchemaCompatibilityChecker {
 
 		// ── Structural identity short-circuit ──
 		// Normalized schemas are equal → subset with no diffs.
-		if (this.engine.isEqual(nSub, nSup)) {
+		// Uses deepEqual for faster comparison with reference equality
+		// short-circuit and key count check.
+		if (deepEqual(nSub, nSup)) {
 			return { isSubset: true, merged: nSub, diffs: [] };
 		}
 

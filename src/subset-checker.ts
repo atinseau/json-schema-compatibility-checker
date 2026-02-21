@@ -415,8 +415,7 @@ function stripNotFromSup(
 			JSONSchema7Definition
 		>;
 		const supProps = result.properties as Record<string, JSONSchema7Definition>;
-		let propsModified = false;
-		const newProps: Record<string, JSONSchema7Definition> = { ...supProps };
+		let newProps: Record<string, JSONSchema7Definition> | undefined;
 
 		for (const key of Object.keys(supProps)) {
 			const supPropDef = supProps[key];
@@ -431,16 +430,17 @@ function stripNotFromSup(
 				// Vérifier la compatibilité du not au niveau de la propriété
 				const propNotResult = evaluateNot(subPropDef, supPropDef);
 				if (propNotResult === true) {
+					// Lazy allocate newProps only on first modification
+					if (!newProps) newProps = { ...supProps };
 					newProps[key] = omitKeys(
 						supPropDef as unknown as Record<string, unknown>,
 						["not"],
 					) as JSONSchema7Definition;
-					propsModified = true;
 				}
 			}
 		}
 
-		if (propsModified) {
+		if (newProps) {
 			result = { ...result, properties: newProps };
 		}
 	}
@@ -680,9 +680,15 @@ export function isAtomicSubsetOf(
 		}
 
 		const merged = engine.merge(sub, effectiveSup);
+		if (merged === null) return false;
 		// Normalise le résultat du merge pour éliminer les artefacts
-		// structurels (ex: enum redondant quand const est présent)
-		return merged !== null && engine.isEqual(normalize(merged), sub);
+		// structurels (ex: enum redondant quand const est présent).
+		// Fast path: deepEqual has reference equality + key count short-circuit.
+		// Fallback: engine.isEqual handles semantic equivalences (type arrays, enum ordering).
+		const normalizedMerged = normalize(merged);
+		return (
+			deepEqual(normalizedMerged, sub) || engine.isEqual(normalizedMerged, sub)
+		);
 	}
 
 	// anyOf/oneOf dans sup → au moins une branche doit accepter sub
@@ -726,7 +732,11 @@ export function isAtomicSubsetOf(
 		}
 
 		const merged = engine.merge(sub, effectiveBranch);
-		return merged !== null && engine.isEqual(normalize(merged), sub);
+		if (merged === null) return false;
+		const normalizedBranch = normalize(merged);
+		return (
+			deepEqual(normalizedBranch, sub) || engine.isEqual(normalizedBranch, sub)
+		);
 	});
 }
 
@@ -799,8 +809,14 @@ export function checkBranchedSup(
 			effectiveBranch = stripPatternFromSup(sub, branch);
 		}
 		const merged = engine.merge(sub, effectiveBranch);
-		if (merged !== null && engine.isEqual(normalize(merged), sub)) {
-			return { isSubset: true, merged, diffs: [] };
+		if (merged !== null) {
+			const normalizedMerged = normalize(merged);
+			if (
+				deepEqual(normalizedMerged, sub) ||
+				engine.isEqual(normalizedMerged, sub)
+			) {
+				return { isSubset: true, merged, diffs: [] };
+			}
 		}
 	}
 
@@ -825,7 +841,8 @@ export function checkBranchedSup(
  * Vérifie `sub ⊆ sup` pour deux schemas atomiques (sans anyOf/oneOf).
  * Utilise `mergeOrThrow` pour capturer les erreurs d'incompatibilité.
  *
- * Utilise `_.isEqual` via engine.isEqual pour la comparaison structurelle.
+ * Utilise `deepEqual` pour la comparaison structurelle (avec short-circuit
+ * par référence et comptage de clés).
  */
 export function checkAtomic(
 	sub: JSONSchema7Definition,
@@ -843,9 +860,11 @@ export function checkAtomic(
 	try {
 		const merged = engine.mergeOrThrow(sub, effectiveSup);
 		const normalizedMerged = normalize(merged);
-		const cmp = engine.compare(normalizedMerged, sub);
 
-		if (cmp === 0) {
+		if (
+			deepEqual(normalizedMerged, sub) ||
+			engine.isEqual(normalizedMerged, sub)
+		) {
 			return { isSubset: true, merged: normalizedMerged, diffs: [] };
 		}
 
