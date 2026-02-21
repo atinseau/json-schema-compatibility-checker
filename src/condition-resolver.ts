@@ -1,25 +1,9 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import every from "lodash/every";
-import filter from "lodash/filter";
-import forEach from "lodash/forEach";
-import get from "lodash/get";
-
-import has from "lodash/has";
-import isArray from "lodash/isArray";
-import isEmpty from "lodash/isEmpty";
-import isEqual from "lodash/isEqual";
-import isPlainObject from "lodash/isPlainObject";
-import keys from "lodash/keys";
-import mapValues from "lodash/mapValues";
-import omit from "lodash/omit";
-import reduce from "lodash/reduce";
-import size from "lodash/size";
-import some from "lodash/some";
-import union from "lodash/union";
 import { validateFormat } from "./format-validator";
 import type { MergeEngine } from "./merge-engine";
 import { inferType } from "./normalizer";
 import type { ResolvedConditionResult } from "./types";
+import { deepEqual, hasOwn, isPlainObj, omitKeys, unionStrings } from "./utils";
 
 // ─── Condition Resolver ──────────────────────────────────────────────────────
 //
@@ -94,11 +78,10 @@ const MAX_KEYS = new Set([
 function matchesType(value: unknown, type: JSONSchema7["type"]): boolean {
 	if (type === undefined) return true;
 
-	const types = isArray(type) ? type : [type];
+	const types = Array.isArray(type) ? type : [type];
 	const actualType = inferType(value);
 
-	return some(
-		types,
+	return types.some(
 		(t) => t === actualType || (t === "number" && actualType === "integer"),
 	);
 }
@@ -152,9 +135,9 @@ function evaluateArrayConstraints(
 	if (prop.maxItems !== undefined && !(value.length <= prop.maxItems))
 		return false;
 	if (prop.uniqueItems === true) {
-		// Vérifier l'unicité via lodash isEqual pour les éléments non-primitifs
-		const isUnique = every(value, (item, idx) =>
-			every(value.slice(idx + 1), (other) => !isEqual(item, other)),
+		// Vérifier l'unicité via deepEqual pour les éléments non-primitifs
+		const isUnique = value.every((item, idx) =>
+			value.slice(idx + 1).every((other) => !deepEqual(item, other)),
 		);
 		if (!isUnique) return false;
 	}
@@ -182,12 +165,12 @@ function evaluateCondition(
 	ifSchema: JSONSchema7,
 	data: Record<string, unknown>,
 ): boolean {
-	if (isPlainObject(ifSchema.properties)) {
-		const propsOk = every(keys(ifSchema.properties), (key) => {
+	if (isPlainObj(ifSchema.properties)) {
+		const propsOk = Object.keys(ifSchema.properties).every((key) => {
 			const propDef = ifSchema.properties?.[key];
 			if (typeof propDef === "boolean") return true;
 			const prop = propDef as JSONSchema7;
-			const value = get(data, key);
+			const value = data[key];
 
 			// ── Propriété absente → skip ──
 			// Selon la spec JSON Schema Draft-07, le keyword `properties` ne valide
@@ -196,17 +179,17 @@ function evaluateCondition(
 			if (value === undefined) return true;
 
 			// ── const ──
-			if (has(prop, "const")) {
-				if (!isEqual(value, prop.const)) return false;
+			if (hasOwn(prop, "const")) {
+				if (!deepEqual(value, prop.const)) return false;
 			}
 
 			// ── enum ──
-			if (has(prop, "enum")) {
-				if (!some(prop.enum, (v) => isEqual(v, value))) return false;
+			if (hasOwn(prop, "enum")) {
+				if (!prop.enum?.some((v) => deepEqual(v, value))) return false;
 			}
 
 			// ── type ──
-			if (has(prop, "type") && value !== undefined) {
+			if (hasOwn(prop, "type") && value !== undefined) {
 				if (!matchesType(value, prop.type)) return false;
 			}
 
@@ -224,7 +207,7 @@ function evaluateCondition(
 				if (!evaluateStringConstraints(value, prop)) return false;
 			}
 
-			if (isArray(value)) {
+			if (Array.isArray(value)) {
 				if (!evaluateArrayConstraints(value as unknown[], prop)) return false;
 			}
 
@@ -244,8 +227,8 @@ function evaluateCondition(
 			// en passant la sous-donnée comme nouveau `data`.
 			// Si data[key] n'est pas un objet, on skip (retourne true pour cette prop,
 			// cohérent avec "absence = pas de contrainte").
-			if (isPlainObject(prop.properties) || isArray(prop.required)) {
-				if (isPlainObject(value)) {
+			if (isPlainObj(prop.properties) || Array.isArray(prop.required)) {
+				if (isPlainObj(value)) {
 					if (!evaluateCondition(prop, value as Record<string, unknown>)) {
 						return false;
 					}
@@ -259,15 +242,17 @@ function evaluateCondition(
 	}
 
 	// ── required ──
-	if (isArray(ifSchema.required)) {
-		const allRequired = every(ifSchema.required, (key) => has(data, key));
+	if (Array.isArray(ifSchema.required)) {
+		const allRequired = ifSchema.required.every((key) =>
+			hasOwn(data, key as string),
+		);
 		if (!allRequired) return false;
 	}
 
 	// ── 2.1 — allOf ──
 	// Toutes les entrées du allOf doivent matcher (évaluation récursive).
-	if (isArray(ifSchema.allOf)) {
-		const allMatch = every(ifSchema.allOf, (entry) => {
+	if (Array.isArray(ifSchema.allOf)) {
+		const allMatch = ifSchema.allOf.every((entry) => {
 			if (typeof entry === "boolean") return entry;
 			return evaluateCondition(entry as JSONSchema7, data);
 		});
@@ -276,8 +261,8 @@ function evaluateCondition(
 
 	// ── 2.2 — anyOf ──
 	// Au moins une entrée du anyOf doit matcher (évaluation récursive).
-	if (isArray(ifSchema.anyOf)) {
-		const anyMatch = some(ifSchema.anyOf, (entry) => {
+	if (Array.isArray(ifSchema.anyOf)) {
+		const anyMatch = ifSchema.anyOf.some((entry) => {
 			if (typeof entry === "boolean") return entry;
 			return evaluateCondition(entry as JSONSchema7, data);
 		});
@@ -286,19 +271,24 @@ function evaluateCondition(
 
 	// ── 2.3 — oneOf ──
 	// Exactement une entrée du oneOf doit matcher (évaluation récursive).
-	if (isArray(ifSchema.oneOf)) {
-		const matchingBranches = filter(ifSchema.oneOf, (entry) => {
-			if (typeof entry === "boolean") return entry;
-			return evaluateCondition(entry as JSONSchema7, data);
-		});
-		if (size(matchingBranches) !== 1) return false;
+	if (Array.isArray(ifSchema.oneOf)) {
+		let matchCount = 0;
+		for (const entry of ifSchema.oneOf) {
+			const matches =
+				typeof entry === "boolean"
+					? entry
+					: evaluateCondition(entry as JSONSchema7, data);
+			if (matches) matchCount++;
+			if (matchCount > 1) break;
+		}
+		if (matchCount !== 1) return false;
 	}
 
 	// ── 2.4 — not ──
 	// Inverser le résultat de l'évaluation du contenu du `not`.
 	if (
-		has(ifSchema, "not") &&
-		isPlainObject(ifSchema.not) &&
+		hasOwn(ifSchema, "not") &&
+		isPlainObj(ifSchema.not) &&
 		typeof ifSchema.not !== "boolean"
 	) {
 		const notResult = evaluateCondition(ifSchema.not as JSONSchema7, data);
@@ -347,21 +337,23 @@ function extractDiscriminants(
 	data: Record<string, unknown>,
 	out: Record<string, unknown>,
 ): void {
-	if (!isPlainObject(ifSchema.properties)) return;
+	if (!isPlainObj(ifSchema.properties)) return;
 
-	forEach(ifSchema.properties, (propDef, key) => {
-		if (typeof propDef === "boolean") return;
+	const props = ifSchema.properties as Record<string, JSONSchema7Definition>;
+	for (const key of Object.keys(props)) {
+		const propDef = props[key];
+		if (typeof propDef === "boolean") continue;
 		const prop = propDef as JSONSchema7;
 
 		// Collecter si au moins un indicateur de discriminant est présent
-		const hasIndicator = some(DISCRIMINANT_INDICATORS, (indicator) =>
-			has(prop, indicator),
+		const hasIndicator = DISCRIMINANT_INDICATORS.some((indicator) =>
+			hasOwn(prop, indicator),
 		);
 
-		if (hasIndicator && has(data, key)) {
+		if (hasIndicator && hasOwn(data, key)) {
 			out[key] = data[key];
 		}
-	});
+	}
 }
 
 // ─── Branch merging (deduplicated) ───────────────────────────────────────────
@@ -396,34 +388,45 @@ function mergeBranchInto(
 	const branchSchema = branchDef as JSONSchema7;
 
 	// ── Merger required via _.union (dédupliquée automatiquement) ──
-	if (isArray(branchSchema.required)) {
-		resolved.required = union(resolved.required ?? [], branchSchema.required);
+	if (Array.isArray(branchSchema.required)) {
+		resolved.required = unionStrings(
+			resolved.required ?? [],
+			branchSchema.required,
+		);
 	}
 
 	// ── Merger properties ──
-	if (isPlainObject(branchSchema.properties)) {
-		resolved.properties = {
+	if (isPlainObj(branchSchema.properties)) {
+		const branchProps = branchSchema.properties as Record<
+			string,
+			JSONSchema7Definition
+		>;
+		const mergedProps: Record<string, JSONSchema7Definition> = {
 			...(resolved.properties ?? {}),
-			...mapValues(branchSchema.properties ?? {}, (branchProp, key) => {
-				const existing = get(resolved.properties, key);
-				if (
-					existing !== undefined &&
-					typeof existing !== "boolean" &&
-					typeof branchProp !== "boolean"
-				) {
-					const merged = engine.merge(
-						existing as JSONSchema7Definition,
-						branchProp as JSONSchema7Definition,
-					);
-					return merged ?? branchProp;
-				}
-				return branchProp;
-			}),
 		};
+		for (const key of Object.keys(branchProps)) {
+			const branchProp = branchProps[key];
+			if (branchProp === undefined) continue;
+			const existing = resolved.properties?.[key];
+			if (
+				existing !== undefined &&
+				typeof existing !== "boolean" &&
+				typeof branchProp !== "boolean"
+			) {
+				const merged = engine.merge(
+					existing as JSONSchema7Definition,
+					branchProp as JSONSchema7Definition,
+				);
+				mergedProps[key] = (merged ?? branchProp) as JSONSchema7Definition;
+			} else {
+				mergedProps[key] = branchProp;
+			}
+		}
+		resolved.properties = mergedProps;
 	}
 
 	// ── Merger dependencies (Point 3) ──
-	if (isPlainObject(branchSchema.dependencies)) {
+	if (isPlainObj(branchSchema.dependencies)) {
 		const resolvedDeps = (resolved.dependencies ?? {}) as Record<
 			string,
 			JSONSchema7Definition | string[]
@@ -433,45 +436,47 @@ function mergeBranchInto(
 			JSONSchema7Definition | string[]
 		>;
 
-		resolved.dependencies = reduce(
-			keys(branchDeps),
-			(acc, depKey) => {
-				const branchVal = branchDeps[depKey] as
-					| JSONSchema7Definition
-					| string[]
-					| undefined;
-				if (branchVal === undefined) return acc;
-				const existingVal = acc[depKey] as
-					| JSONSchema7Definition
-					| string[]
-					| undefined;
+		const acc = { ...resolvedDeps };
+		for (const depKey of Object.keys(branchDeps)) {
+			const branchVal = branchDeps[depKey] as
+				| JSONSchema7Definition
+				| string[]
+				| undefined;
+			if (branchVal === undefined) continue;
+			const existingVal = acc[depKey] as
+				| JSONSchema7Definition
+				| string[]
+				| undefined;
 
-				if (existingVal === undefined) {
-					// Pas de valeur existante → copier directement
-					acc[depKey] = branchVal;
-				} else if (isArray(existingVal) && isArray(branchVal)) {
-					// Forme 1 : union dédupliquée des tableaux de strings
-					acc[depKey] = union(existingVal as string[], branchVal as string[]);
-				} else if (isPlainObject(existingVal) && isPlainObject(branchVal)) {
-					// Forme 2 : merge des sous-schemas
-					const merged = engine.merge(
-						existingVal as JSONSchema7Definition,
-						branchVal as JSONSchema7Definition,
-					);
-					acc[depKey] = (merged ?? branchVal) as JSONSchema7Definition;
-				} else {
-					// Types incompatibles (tableau vs schema) → la branche gagne
-					acc[depKey] = branchVal;
-				}
-
-				return acc;
-			},
-			{ ...resolvedDeps },
-		) as Record<string, JSONSchema7Definition | string[]>;
+			if (existingVal === undefined) {
+				// Pas de valeur existante → copier directement
+				acc[depKey] = branchVal;
+			} else if (Array.isArray(existingVal) && Array.isArray(branchVal)) {
+				// Forme 1 : union dédupliquée des tableaux de strings
+				acc[depKey] = unionStrings(
+					existingVal as string[],
+					branchVal as string[],
+				);
+			} else if (isPlainObj(existingVal) && isPlainObj(branchVal)) {
+				// Forme 2 : merge des sous-schemas
+				const merged = engine.merge(
+					existingVal as JSONSchema7Definition,
+					branchVal as JSONSchema7Definition,
+				);
+				acc[depKey] = (merged ?? branchVal) as JSONSchema7Definition;
+			} else {
+				// Types incompatibles (tableau vs schema) → la branche gagne
+				acc[depKey] = branchVal;
+			}
+		}
+		resolved.dependencies = acc as Record<
+			string,
+			JSONSchema7Definition | string[]
+		>;
 	}
 
 	// ── Merger les autres mots-clés (Point 4 — fix first-writer-wins) ──
-	forEach(keys(branchSchema) as (keyof JSONSchema7)[], (key) => {
+	for (const key of Object.keys(branchSchema) as (keyof JSONSchema7)[]) {
 		// Skip les clés déjà traitées ci-dessus
 		if (SPECIAL_MERGE_KEYS.has(key)) return;
 
@@ -485,7 +490,7 @@ function mergeBranchInto(
 		}
 
 		// Si les deux ont la même valeur → rien à faire
-		if (isEqual(resolvedVal, branchVal)) return;
+		if (deepEqual(resolvedVal, branchVal)) return;
 
 		// ── Sub-schema keys → merge via engine ──
 		if (SUB_SCHEMA_KEYS.has(key)) {
@@ -545,7 +550,11 @@ function mergeBranchInto(
 		const base = { [key]: resolvedVal } as JSONSchema7Definition;
 		const branch = { [key]: branchVal } as JSONSchema7Definition;
 		const merged = engine.merge(base, branch);
-		if (merged && typeof merged !== "boolean" && has(merged, key)) {
+		if (
+			merged &&
+			typeof merged !== "boolean" &&
+			hasOwn(merged as object, key)
+		) {
 			(resolved as Record<string, unknown>)[key] = (
 				merged as unknown as Record<string, unknown>
 			)[key];
@@ -553,7 +562,7 @@ function mergeBranchInto(
 			// Merge échoué → la branche gagne (contexte conditionnel applicable)
 			(resolved as Record<string, unknown>)[key] = branchVal;
 		}
-	});
+	}
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -636,21 +645,21 @@ function resolveAllOfConditions(
 	engine: MergeEngine,
 	discriminant: Record<string, unknown>,
 ): JSONSchema7 {
-	if (!isArray(resolved.allOf)) return resolved;
+	if (!Array.isArray(resolved.allOf)) return resolved;
 
 	const remainingAllOf: JSONSchema7Definition[] = [];
 
-	forEach(resolved.allOf, (entry) => {
+	for (const entry of resolved.allOf) {
 		if (typeof entry === "boolean") {
 			remainingAllOf.push(entry);
-			return;
+			continue;
 		}
 
 		const subSchema = entry as JSONSchema7;
 
 		if (subSchema.if === undefined) {
 			remainingAllOf.push(entry);
-			return;
+			continue;
 		}
 
 		// Résoudre la condition de cette entrée allOf
@@ -670,15 +679,17 @@ function resolveAllOfConditions(
 		}
 
 		// Garder les parties non-conditionnelles de l'entrée allOf
-		// Utilise `_.omit` pour supprimer proprement if/then/else
-		const remaining = omit(subSchema, ["if", "then", "else"]);
-		if (!isEmpty(remaining)) {
+		const remaining = omitKeys(
+			subSchema as unknown as Record<string, unknown>,
+			["if", "then", "else"],
+		);
+		if (Object.keys(remaining).length > 0) {
 			remainingAllOf.push(remaining as JSONSchema7);
 		}
-	});
+	}
 
 	resolved = { ...resolved };
-	if (isEmpty(remainingAllOf)) {
+	if (remainingAllOf.length === 0) {
 		delete resolved.allOf;
 	} else {
 		resolved.allOf = remainingAllOf;
@@ -700,33 +711,51 @@ function resolveNestedProperties(
 	engine: MergeEngine,
 	discriminant: Record<string, unknown>,
 ): JSONSchema7 {
-	if (!isPlainObject(resolved.properties)) return resolved;
+	if (!isPlainObj(resolved.properties)) return resolved;
 
-	const resolvedProps = mapValues(resolved.properties ?? {}, (propDef, key) => {
-		if (typeof propDef === "boolean") return propDef;
+	const props = resolved.properties as Record<string, JSONSchema7Definition>;
+	const propKeys = Object.keys(props);
+	let changed = false;
+	const resolvedProps: Record<string, JSONSchema7Definition> = {};
+
+	for (const key of propKeys) {
+		const propDef = props[key];
+		if (propDef === undefined) continue;
+		if (typeof propDef === "boolean") {
+			resolvedProps[key] = propDef;
+			continue;
+		}
 
 		const propSchema = propDef as JSONSchema7;
 		const hasConditions =
 			propSchema.if !== undefined ||
-			(isArray(propSchema.allOf) &&
-				some(propSchema.allOf, (e) => typeof e !== "boolean" && has(e, "if")));
+			(Array.isArray(propSchema.allOf) &&
+				propSchema.allOf.some(
+					(e) => typeof e !== "boolean" && hasOwn(e as object, "if"),
+				));
 
-		if (!hasConditions) return propDef;
+		if (!hasConditions) {
+			resolvedProps[key] = propDef;
+			continue;
+		}
 
 		// Données imbriquées disponibles → résoudre récursivement
-		const nestedData = isPlainObject(data[key])
+		const nestedData = isPlainObj(data[key])
 			? (data[key] as Record<string, unknown>)
 			: {};
 
 		const nested = resolveConditions(propSchema, nestedData, engine);
 
 		// Remonter les discriminants imbriqués avec prefix
-		forEach(nested.discriminant, (dv, dk) => {
-			discriminant[`${key}.${dk}`] = dv;
-		});
+		for (const dk of Object.keys(nested.discriminant)) {
+			discriminant[`${key}.${dk}`] = nested.discriminant[dk];
+		}
 
-		return nested.resolved;
-	});
+		resolvedProps[key] = nested.resolved;
+		changed = true;
+	}
 
-	return { ...resolved, properties: resolvedProps };
+	return changed
+		? { ...resolved, properties: resolvedProps }
+		: { ...resolved, properties: props };
 }

@@ -82,8 +82,20 @@ export class JsonSchemaCompatibilityChecker {
 	 * en interne, bien que le résultat boolean ne reflète pas la distinction.
 	 */
 	isSubset(sub: JSONSchema7Definition, sup: JSONSchema7Definition): boolean {
+		// ── Identity short-circuit ──
+		// If sub and sup are the same reference, sub ⊆ sup is trivially true.
+		// This avoids the entire normalize + merge + compare pipeline.
+		if (sub === sup) return true;
+
 		const nSub = normalize(sub);
 		const nSup = normalize(sup);
+
+		// ── Structural identity short-circuit ──
+		// After normalization, if the two schemas are structurally equal,
+		// sub ⊆ sup without needing a merge. Uses the engine's comparator
+		// which is faster than a full merge + compare cycle.
+		if (this.engine.isEqual(nSub, nSup)) return true;
+
 		const { branches: subBranches } = getBranchesTyped(nSub);
 
 		if (subBranches.length > 1 || subBranches[0] !== nSub) {
@@ -105,8 +117,21 @@ export class JsonSchemaCompatibilityChecker {
 	 * dans les paths de diff (ex: `anyOf[0]` vs `oneOf[0]`).
 	 */
 	check(sub: JSONSchema7Definition, sup: JSONSchema7Definition): SubsetResult {
+		// ── Identity short-circuit ──
+		// Same reference → no diffs, no merge needed.
+		if (sub === sup) {
+			return { isSubset: true, merged: sub, diffs: [] };
+		}
+
 		const nSub = normalize(sub);
 		const nSup = normalize(sup);
+
+		// ── Structural identity short-circuit ──
+		// Normalized schemas are equal → subset with no diffs.
+		if (this.engine.isEqual(nSub, nSup)) {
+			return { isSubset: true, merged: nSub, diffs: [] };
+		}
+
 		const { branches: subBranches, type: subBranchType } =
 			getBranchesTyped(nSub);
 		const { branches: supBranches, type: supBranchType } =

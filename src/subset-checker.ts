@@ -1,21 +1,11 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import every from "lodash/every";
-import get from "lodash/get";
-import has from "lodash/has";
-import includes from "lodash/includes";
-import isArray from "lodash/isArray";
-import isEmpty from "lodash/isEmpty";
-import isEqual from "lodash/isEqual";
-import isPlainObject from "lodash/isPlainObject";
-import keys from "lodash/keys";
-import omit from "lodash/omit";
-import some from "lodash/some";
 import { computeDiffs } from "./differ";
 import { isFormatSubset } from "./format-validator";
 import type { MergeEngine } from "./merge-engine";
 import { normalize } from "./normalizer";
 import { isPatternSubset } from "./pattern-subset";
 import type { SchemaDiff, SubsetResult } from "./types";
+import { deepEqual, hasOwn, isPlainObj, omitKeys } from "./utils";
 
 // ─── Subset Checker ──────────────────────────────────────────────────────────
 //
@@ -34,18 +24,8 @@ import type { SchemaDiff, SubsetResult } from "./types";
 //     - not dans sub (1.3)
 //     - not.format (format-vs-format)
 //
-// Utilise lodash massivement :
-//   - `_.some` / `_.every`      pour les prédicats sur les branches
-//   - `_.has` / `_.get`         pour l'accès sûr aux propriétés
-//   - `_.isArray`               pour distinguer les types de branches
-//   - `_.isPlainObject`         pour vérifier les sous-schemas
-//   - `_.map` / `_.flatMap`     pour transformer les collections
-//   - `_.includes`              pour vérifier l'appartenance
-//   - `_.keys`                  pour extraire les clés d'un objet
-//   - `_.isEmpty`               pour vérifier les objets vides
-//   - `_.isEqual`               pour la comparaison profonde
-//   - `_.omit`                  pour retirer `not` avant le merge
-//   - `_.compact`               pour nettoyer les résultats
+// Utilise des helpers natifs partagés depuis `./utils` pour des performances
+// optimales (deepEqual, hasOwn, isPlainObj, omitKeys).
 
 // ─── Branch type ─────────────────────────────────────────────────────────────
 
@@ -84,10 +64,10 @@ export function getBranchesTyped(def: JSONSchema7Definition): BranchResult {
 	if (typeof def === "boolean") {
 		return { branches: [def], type: "none" };
 	}
-	if (has(def, "anyOf") && isArray(def.anyOf)) {
+	if (hasOwn(def, "anyOf") && Array.isArray(def.anyOf)) {
 		return { branches: def.anyOf, type: "anyOf" };
 	}
-	if (has(def, "oneOf") && isArray(def.oneOf)) {
+	if (hasOwn(def, "oneOf") && Array.isArray(def.oneOf)) {
 		return { branches: def.oneOf, type: "oneOf" };
 	}
 	return { branches: [def], type: "none" };
@@ -139,7 +119,7 @@ function evaluateNot(
 	// Exception : si les deux ont `not`, on traite l'identité plus bas.
 
 	// Vérifier `not` dans sup
-	if (has(sup, "not") && isPlainObject(sup.not)) {
+	if (hasOwn(sup, "not") && isPlainObj(sup.not)) {
 		const notSchema = sup.not as JSONSchema7;
 
 		// ── 1.1 — Cas not avec properties + required ──
@@ -150,7 +130,7 @@ function evaluateNot(
 		// ce qui rendrait sub compatible avec le not).
 		// Si not contient des properties avec const/enum et required,
 		// vérifier que les propriétés de sub sont incompatibles avec celles du not.
-		if (isPlainObject(notSchema.properties) && isArray(notSchema.required)) {
+		if (isPlainObj(notSchema.properties) && Array.isArray(notSchema.required)) {
 			const notProps = notSchema.properties as Record<
 				string,
 				JSONSchema7Definition
@@ -158,20 +138,20 @@ function evaluateNot(
 			const notRequired = notSchema.required as string[];
 
 			// sub doit avoir des properties pour qu'on puisse comparer
-			if (isPlainObject(sub.properties)) {
+			if (isPlainObj(sub.properties)) {
 				const subProps = sub.properties as Record<
 					string,
 					JSONSchema7Definition
 				>;
-				const subRequired = isArray(sub.required)
+				const subRequired = Array.isArray(sub.required)
 					? (sub.required as string[])
 					: [];
-				const notPropKeys = keys(notProps);
+				const notPropKeys = Object.keys(notProps);
 
 				// Pour que sub soit compatible avec not(schema),
 				// il suffit qu'au moins UNE propriété du not soit incompatible avec sub.
 				// Cela signifie que sub ne peut jamais valider le schema inside not.
-				const hasIncompatibleProp = some(notPropKeys, (key) => {
+				const hasIncompatibleProp = notPropKeys.some((key) => {
 					const notPropDef = notProps[key];
 					if (typeof notPropDef === "boolean") return false;
 					const notProp = notPropDef as JSONSchema7;
@@ -180,39 +160,38 @@ function evaluateNot(
 					// et qu'elle n'existe pas dans sub.properties → sub peut ne pas
 					// avoir cette propriété → le not schema ne matcherait pas → compatible
 					if (
-						includes(notRequired, key) &&
-						!includes(subRequired, key) &&
-						!has(subProps, key)
+						notRequired.includes(key) &&
+						!subRequired.includes(key) &&
+						!hasOwn(subProps, key)
 					) {
 						return true; // Propriété absente de sub → not ne matche pas
 					}
 
 					// Comparer les const/enum de la propriété
-					if (!has(subProps, key)) return false;
+					if (!hasOwn(subProps, key)) return false;
 					const subPropDef = subProps[key];
 					if (typeof subPropDef === "boolean") return false;
 					const subProp = subPropDef as JSONSchema7;
 
 					// not.prop a un const, sub.prop a un const différent → incompatible pour cette prop
-					if (has(notProp, "const") && has(subProp, "const")) {
-						if (!isEqual(notProp.const, subProp.const)) {
+					if (hasOwn(notProp, "const") && hasOwn(subProp, "const")) {
+						if (!deepEqual(notProp.const, subProp.const)) {
 							return true; // Consts différents → sub ne matche pas le not
 						}
 					}
 
 					// not.prop a un enum, sub.prop a un const ou enum dont aucune valeur
 					// n'est dans not.enum → incompatible pour cette prop
-					if (has(notProp, "enum") && isArray(notProp.enum)) {
-						if (has(subProp, "const")) {
-							const inNotEnum = some(notProp.enum, (v) =>
-								isEqual(v, subProp.const),
+					if (hasOwn(notProp, "enum") && Array.isArray(notProp.enum)) {
+						if (hasOwn(subProp, "const")) {
+							const inNotEnum = notProp.enum.some((v) =>
+								deepEqual(v, subProp.const),
 							);
 							if (!inNotEnum) return true; // sub.const absent du not.enum
 						}
-						if (has(subProp, "enum") && isArray(subProp.enum)) {
-							const noneInNotEnum = every(
-								subProp.enum,
-								(v) => !some(notProp.enum, (nv) => isEqual(v, nv)),
+						if (hasOwn(subProp, "enum") && Array.isArray(subProp.enum)) {
+							const noneInNotEnum = subProp.enum.every(
+								(v) => !notProp.enum?.some((nv) => deepEqual(v, nv)),
 							);
 							if (noneInNotEnum) return true; // Aucune valeur de sub.enum dans not.enum
 						}
@@ -225,33 +204,33 @@ function evaluateNot(
 
 				// Vérification inverse : si TOUTES les propriétés du not matchent sub
 				// exactement (même const, sub a les required du not), alors sub VIOLE le not
-				const allPropsMatch = every(notPropKeys, (key) => {
+				const allPropsMatch = notPropKeys.every((key) => {
 					const notPropDef = notProps[key];
 					if (typeof notPropDef === "boolean") return true;
 					const notProp = notPropDef as JSONSchema7;
 
 					// La propriété doit être dans sub.required si elle est dans not.required
-					if (includes(notRequired, key) && !includes(subRequired, key))
+					if (notRequired.includes(key) && !subRequired.includes(key))
 						return false;
-					if (!has(subProps, key)) return false;
+					if (!hasOwn(subProps, key)) return false;
 					const subPropDef = subProps[key];
 					if (typeof subPropDef === "boolean") return true;
 					const subProp = subPropDef as JSONSchema7;
 
 					// Vérifier const match
-					if (has(notProp, "const") && has(subProp, "const")) {
-						return isEqual(notProp.const, subProp.const);
+					if (hasOwn(notProp, "const") && hasOwn(subProp, "const")) {
+						return deepEqual(notProp.const, subProp.const);
 					}
 
 					// Vérifier enum inclusion
-					if (has(notProp, "enum") && isArray(notProp.enum)) {
-						if (has(subProp, "const")) {
-							return some(notProp.enum, (v) => isEqual(v, subProp.const));
+					if (hasOwn(notProp, "enum") && Array.isArray(notProp.enum)) {
+						if (hasOwn(subProp, "const")) {
+							return notProp.enum.some((v) => deepEqual(v, subProp.const));
 						}
-						if (has(subProp, "enum") && isArray(subProp.enum)) {
+						if (hasOwn(subProp, "enum") && Array.isArray(subProp.enum)) {
 							// Toutes les valeurs de sub.enum sont dans not.enum
-							return every(subProp.enum, (v) =>
-								some(notProp.enum, (nv) => isEqual(v, nv)),
+							return subProp.enum.every((v) =>
+								notProp.enum?.some((nv) => deepEqual(v, nv)),
 							);
 						}
 					}
@@ -269,25 +248,24 @@ function evaluateNot(
 		// faux négatif (ex: sub type=string const="active" et not type=string
 		// const="deleted" → le type check retournerait false car même type,
 		// alors que les consts sont différents → compatible).
-		if (has(notSchema, "const") && has(sub, "const")) {
-			const notConst = get(notSchema, "const");
-			const subConst = get(sub, "const");
-			if (isEqual(subConst, notConst)) return false;
+		if (hasOwn(notSchema, "const") && hasOwn(sub, "const")) {
+			const notConst = notSchema.const;
+			const subConst = sub.const;
+			if (deepEqual(subConst, notConst)) return false;
 			return true;
 		}
 
 		// ── Cas not.enum ──
 		// Aussi placé AVANT not.type pour la même raison.
 		if (
-			has(notSchema, "enum") &&
-			isArray(notSchema.enum) &&
-			has(sub, "enum") &&
-			isArray(sub.enum)
+			hasOwn(notSchema, "enum") &&
+			Array.isArray(notSchema.enum) &&
+			hasOwn(sub, "enum") &&
+			Array.isArray(sub.enum)
 		) {
 			// Toutes les valeurs de sub.enum doivent être absentes de not.enum
-			const allExcluded = every(
-				sub.enum,
-				(val) => !some(notSchema.enum, (notVal) => isEqual(val, notVal)),
+			const allExcluded = sub.enum.every(
+				(val) => !notSchema.enum?.some((notVal) => deepEqual(val, notVal)),
 			);
 			if (allExcluded) return true;
 			// Certaines valeurs de sub sont dans not.enum → pas automatiquement faux,
@@ -299,18 +277,18 @@ function evaluateNot(
 		// court-circuiter les cas où le not a des contraintes plus spécifiques.
 		// Le check type seul est un fallback pour les not schemas simples
 		// (ex: { not: { type: "string" } }).
-		if (has(notSchema, "type") && has(sub, "type")) {
-			const notType = get(notSchema, "type");
-			const subType = get(sub, "type");
+		if (hasOwn(notSchema, "type") && hasOwn(sub, "type")) {
+			const notType = notSchema.type;
+			const subType = sub.type;
 
 			// Si les deux sont des strings simples
 			if (typeof notType === "string" && typeof subType === "string") {
 				// Ne retourner que si le not n'a PAS de contraintes plus spécifiques
 				// (const, enum, properties) qui auraient dû être traitées plus haut
 				if (
-					!has(notSchema, "const") &&
-					!has(notSchema, "enum") &&
-					!isPlainObject(notSchema.properties)
+					!hasOwn(notSchema, "const") &&
+					!hasOwn(notSchema, "enum") &&
+					!isPlainObj(notSchema.properties)
 				) {
 					if (subType === notType) return false; // Incompatible : sub est exactement le type exclu
 					return true; // Compatible : sub est un type différent du type exclu
@@ -318,8 +296,8 @@ function evaluateNot(
 			}
 
 			// Si notType est un tableau, sub.type doit ne pas être dedans
-			if (isArray(notType) && typeof subType === "string") {
-				if (includes(notType, subType)) return false;
+			if (Array.isArray(notType) && typeof subType === "string") {
+				if (notType.includes(subType)) return false;
 				return true;
 			}
 		}
@@ -327,10 +305,10 @@ function evaluateNot(
 		// ── 1.2 — Cas not avec anyOf / oneOf ──
 		// not(anyOf([A, B])) ≡ allOf([not(A), not(B)])
 		// Pour que sub ⊆ not(anyOf(...)), sub doit être incompatible avec CHAQUE branche.
-		if (has(notSchema, "anyOf") && isArray(notSchema.anyOf)) {
+		if (hasOwn(notSchema, "anyOf") && Array.isArray(notSchema.anyOf)) {
 			const branches = notSchema.anyOf as JSONSchema7Definition[];
 			// Pour chaque branche du not.anyOf, vérifier que sub est incompatible
-			const allIncompatible = every(branches, (branch) => {
+			const allIncompatible = branches.every((branch) => {
 				if (typeof branch === "boolean") return !branch; // not(true) = rien, not(false) = tout
 				// Créer un sup virtuel { not: branch } et vérifier récursivement
 				const result = evaluateNot(sub, { not: branch });
@@ -342,7 +320,7 @@ function evaluateNot(
 			if (allIncompatible) return true;
 
 			// Vérifier si au moins une branche accepte sub → incompatible avec not(anyOf)
-			const anyBranchMatches = some(branches, (branch) => {
+			const anyBranchMatches = branches.some((branch) => {
 				if (typeof branch === "boolean") return branch;
 				const result = evaluateNot(sub, { not: branch });
 				return result === false; // sub est incompatible avec not(branch) → sub ⊆ branch
@@ -351,16 +329,16 @@ function evaluateNot(
 		}
 
 		// Même logique pour oneOf (dans le contexte du not, traité comme anyOf)
-		if (has(notSchema, "oneOf") && isArray(notSchema.oneOf)) {
+		if (hasOwn(notSchema, "oneOf") && Array.isArray(notSchema.oneOf)) {
 			const branches = notSchema.oneOf as JSONSchema7Definition[];
-			const allIncompatible = every(branches, (branch) => {
+			const allIncompatible = branches.every((branch) => {
 				if (typeof branch === "boolean") return !branch;
 				const result = evaluateNot(sub, { not: branch });
 				return result === true;
 			});
 			if (allIncompatible) return true;
 
-			const anyBranchMatches = some(branches, (branch) => {
+			const anyBranchMatches = branches.some((branch) => {
 				if (typeof branch === "boolean") return branch;
 				const result = evaluateNot(sub, { not: branch });
 				return result === false;
@@ -370,7 +348,7 @@ function evaluateNot(
 
 		// ── Cas not.format (format-vs-format uniquement) ──
 		// Si not a un format et sub aussi, vérifier la compatibilité
-		if (has(notSchema, "format") && has(sub, "format")) {
+		if (hasOwn(notSchema, "format") && hasOwn(sub, "format")) {
 			const subFormat = sub.format as string;
 			const notFormat = notSchema.format as string;
 			if (subFormat === notFormat) return false; // Incompatible : sub a exactement le format exclu
@@ -380,8 +358,8 @@ function evaluateNot(
 	}
 
 	// Vérifier `not` dans sub ET dans sup (identité : { not: X } ⊆ { not: X })
-	if (has(sub, "not") && has(sup, "not")) {
-		if (isEqual(sub.not, sup.not)) return true;
+	if (hasOwn(sub, "not") && hasOwn(sup, "not")) {
+		if (deepEqual(sub.not, sup.not)) return true;
 	}
 
 	return null; // Pas d'avis → laisser le merge engine décider
@@ -411,16 +389,18 @@ function stripNotFromSup(
 	let result = sup as JSONSchema7;
 
 	// ── Retirer le `not` de niveau supérieur (seulement si confirmé) ──
-	if (stripTopLevel && has(result, "not")) {
-		result = omit(result, ["not"]) as JSONSchema7;
+	if (stripTopLevel && hasOwn(result, "not")) {
+		result = omitKeys(result as unknown as Record<string, unknown>, [
+			"not",
+		]) as JSONSchema7;
 	}
 
 	// ── Retirer les `not` dans les propriétés communes ──
 	// Si sup.properties[key] a un `not` et que evaluateNot(sub.prop, sup.prop)
 	// confirme la compatibilité, on retire le `not` de cette propriété aussi.
 	if (
-		isPlainObject(result.properties) &&
-		isPlainObject((sub as JSONSchema7).properties)
+		isPlainObj(result.properties) &&
+		isPlainObj((sub as JSONSchema7).properties)
 	) {
 		const subProps = (sub as JSONSchema7).properties as Record<
 			string,
@@ -430,21 +410,23 @@ function stripNotFromSup(
 		let propsModified = false;
 		const newProps: Record<string, JSONSchema7Definition> = { ...supProps };
 
-		for (const key of keys(supProps)) {
+		for (const key of Object.keys(supProps)) {
 			const supPropDef = supProps[key];
 			const subPropDef = subProps[key];
 			if (
+				supPropDef !== undefined &&
 				subPropDef !== undefined &&
 				typeof supPropDef !== "boolean" &&
 				typeof subPropDef !== "boolean" &&
-				has(supPropDef, "not")
+				hasOwn(supPropDef, "not")
 			) {
 				// Vérifier la compatibilité du not au niveau de la propriété
 				const propNotResult = evaluateNot(subPropDef, supPropDef);
 				if (propNotResult === true) {
-					newProps[key] = omit(supPropDef as JSONSchema7, [
-						"not",
-					]) as JSONSchema7Definition;
+					newProps[key] = omitKeys(
+						supPropDef as unknown as Record<string, unknown>,
+						["not"],
+					) as JSONSchema7Definition;
 					propsModified = true;
 				}
 			}
@@ -485,8 +467,8 @@ function stripPatternFromSup(
 
 	// ── Top-level pattern ──
 	if (
-		has(result, "pattern") &&
-		has(sub, "pattern") &&
+		hasOwn(result, "pattern") &&
+		hasOwn(sub, "pattern") &&
 		result.pattern !== sub.pattern
 	) {
 		const patResult = isPatternSubset(
@@ -494,14 +476,16 @@ function stripPatternFromSup(
 			result.pattern as string,
 		);
 		if (patResult === true) {
-			result = omit(result, ["pattern"]) as JSONSchema7;
+			result = omitKeys(result as unknown as Record<string, unknown>, [
+				"pattern",
+			]) as JSONSchema7;
 		}
 	}
 
 	// ── Patterns dans les propriétés communes ──
 	if (
-		isPlainObject(result.properties) &&
-		isPlainObject((sub as JSONSchema7).properties)
+		isPlainObj(result.properties) &&
+		isPlainObj((sub as JSONSchema7).properties)
 	) {
 		const subProps = (sub as JSONSchema7).properties as Record<
 			string,
@@ -511,15 +495,16 @@ function stripPatternFromSup(
 		let propsModified = false;
 		const newProps: Record<string, JSONSchema7Definition> = { ...supProps };
 
-		for (const key of keys(supProps)) {
+		for (const key of Object.keys(supProps)) {
 			const supPropDef = supProps[key];
 			const subPropDef = subProps[key];
 			if (
+				supPropDef !== undefined &&
 				subPropDef !== undefined &&
 				typeof supPropDef !== "boolean" &&
 				typeof subPropDef !== "boolean" &&
-				has(supPropDef, "pattern") &&
-				has(subPropDef, "pattern") &&
+				hasOwn(supPropDef, "pattern") &&
+				hasOwn(subPropDef, "pattern") &&
 				supPropDef.pattern !== subPropDef.pattern
 			) {
 				const propPatResult = isPatternSubset(
@@ -527,9 +512,10 @@ function stripPatternFromSup(
 					(supPropDef as JSONSchema7).pattern as string,
 				);
 				if (propPatResult === true) {
-					newProps[key] = omit(supPropDef as JSONSchema7, [
-						"pattern",
-					]) as JSONSchema7Definition;
+					newProps[key] = omitKeys(
+						supPropDef as unknown as Record<string, unknown>,
+						["pattern"],
+					) as JSONSchema7Definition;
 					propsModified = true;
 				}
 			}
@@ -542,16 +528,16 @@ function stripPatternFromSup(
 
 	// ── Pattern dans items (single schema) ──
 	if (
-		isPlainObject(result.items) &&
+		isPlainObj(result.items) &&
 		typeof result.items !== "boolean" &&
-		isPlainObject((sub as JSONSchema7).items) &&
+		isPlainObj((sub as JSONSchema7).items) &&
 		typeof (sub as JSONSchema7).items !== "boolean"
 	) {
 		const subItems = (sub as JSONSchema7).items as JSONSchema7;
 		const supItems = result.items as JSONSchema7;
 		if (
-			has(supItems, "pattern") &&
-			has(subItems, "pattern") &&
+			hasOwn(supItems, "pattern") &&
+			hasOwn(subItems, "pattern") &&
 			supItems.pattern !== subItems.pattern
 		) {
 			const itemsPatResult = isPatternSubset(
@@ -561,7 +547,9 @@ function stripPatternFromSup(
 			if (itemsPatResult === true) {
 				result = {
 					...result,
-					items: omit(supItems, ["pattern"]) as JSONSchema7Definition,
+					items: omitKeys(supItems as unknown as Record<string, unknown>, [
+						"pattern",
+					]) as JSONSchema7Definition,
 				};
 			}
 		}
@@ -611,8 +599,8 @@ export function isAtomicSubsetOf(
 		if (
 			typeof sub !== "boolean" &&
 			typeof sup !== "boolean" &&
-			has(sub, "format") &&
-			has(sup, "format") &&
+			hasOwn(sub, "format") &&
+			hasOwn(sup, "format") &&
 			sub.format !== sup.format
 		) {
 			const fmtResult = isFormatSubset(
@@ -630,8 +618,8 @@ export function isAtomicSubsetOf(
 		if (
 			typeof sub !== "boolean" &&
 			typeof sup !== "boolean" &&
-			has(sub, "pattern") &&
-			has(sup, "pattern") &&
+			hasOwn(sub, "pattern") &&
+			hasOwn(sup, "pattern") &&
 			sub.pattern !== sup.pattern
 		) {
 			const patResult = isPatternSubset(
@@ -651,7 +639,10 @@ export function isAtomicSubsetOf(
 			if (notResult === true) {
 				effectiveSup = stripNotFromSup(sub, sup, true);
 				// Si sup n'avait QUE `not` → sub est compatible (le not est résolu)
-				if (typeof effectiveSup !== "boolean" && isEmpty(keys(effectiveSup))) {
+				if (
+					typeof effectiveSup !== "boolean" &&
+					Object.keys(effectiveSup).length === 0
+				) {
 					return true;
 				}
 			} else {
@@ -675,7 +666,7 @@ export function isAtomicSubsetOf(
 	}
 
 	// anyOf/oneOf dans sup → au moins une branche doit accepter sub
-	return some(supBranches, (branch) => {
+	return supBranches.some((branch) => {
 		// Point 7 : pré-check `not` étendu par branche
 		const notResult = evaluateNot(sub, branch);
 		if (notResult === false) return false;
@@ -684,8 +675,8 @@ export function isAtomicSubsetOf(
 		if (
 			typeof sub !== "boolean" &&
 			typeof branch !== "boolean" &&
-			has(sub, "pattern") &&
-			has(branch, "pattern") &&
+			hasOwn(sub, "pattern") &&
+			hasOwn(branch, "pattern") &&
 			sub.pattern !== branch.pattern
 		) {
 			const patResult = isPatternSubset(
@@ -702,7 +693,7 @@ export function isAtomicSubsetOf(
 				effectiveBranch = stripNotFromSup(sub, branch, true);
 				if (
 					typeof effectiveBranch !== "boolean" &&
-					isEmpty(keys(effectiveBranch))
+					Object.keys(effectiveBranch).length === 0
 				) {
 					return true;
 				}

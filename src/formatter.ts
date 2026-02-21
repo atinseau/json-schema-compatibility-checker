@@ -1,14 +1,8 @@
-import isEmpty from "lodash/isEmpty";
-import map from "lodash/map";
 import type { SubsetResult } from "./types";
 
 // ─── Result Formatter ────────────────────────────────────────────────────────
 //
 // Formate un `SubsetResult` en chaîne lisible pour logs / debug.
-//
-// Utilise lodash :
-//   - `_.map`     pour transformer les diffs en lignes formatées
-//   - `_.isEmpty` pour vérifier la présence de diffs
 
 /**
  * Formate un diff individuel en ligne lisible avec préfixe iconique.
@@ -56,12 +50,12 @@ export function formatResult(label: string, result: SubsetResult): string {
 	const icon = result.isSubset ? "✅" : "❌";
 	const lines: string[] = [`${icon} ${label}: ${result.isSubset}`];
 
-	if (!result.isSubset && !isEmpty(result.diffs)) {
+	if (!result.isSubset && result.diffs.length > 0) {
 		lines.push("   Diffs:");
 
-		// Utilise `_.map` pour transformer chaque diff en ligne formatée
-		const diffLines = map(result.diffs, (d) => `     ${formatDiffLine(d)}`);
-		lines.push(...diffLines);
+		for (const d of result.diffs) {
+			lines.push(`     ${formatDiffLine(d)}`);
+		}
 	}
 
 	return lines.join("\n");

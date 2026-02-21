@@ -13,15 +13,9 @@ import type {
 	JSONSchema7Definition,
 	JSONSchema7Type,
 } from "json-schema";
-import get from "lodash/get";
-import has from "lodash/has";
-import isArray from "lodash/isArray";
-import isEqual from "lodash/isEqual";
-import isPlainObject from "lodash/isPlainObject";
-import keys from "lodash/keys";
-import some from "lodash/some";
 
 import { isFormatSubset } from "./format-validator";
+import { deepEqual, hasOwn, isPlainObj } from "./utils";
 
 // ─── Merge Engine ────────────────────────────────────────────────────────────
 //
@@ -56,24 +50,24 @@ function hasConstConflict(
 ): boolean {
 	if (typeof a === "boolean" || typeof b === "boolean") return false;
 
-	const aHasConst = has(a, "const");
-	const bHasConst = has(b, "const");
-	const aConst = get(a, "const");
-	const bConst = get(b, "const");
-	const aEnum: unknown[] | undefined = get(a, "enum");
-	const bEnum: unknown[] | undefined = get(b, "enum");
+	const aHasConst = hasOwn(a, "const");
+	const bHasConst = hasOwn(b, "const");
+	const aConst = (a as Record<string, unknown>).const;
+	const bConst = (b as Record<string, unknown>).const;
+	const aEnum = a.enum as unknown[] | undefined;
+	const bEnum = b.enum as unknown[] | undefined;
 
 	// Cas 1 — const vs const
 	if (aHasConst && bHasConst) {
-		return !isEqual(aConst, bConst);
+		return !deepEqual(aConst, bConst);
 	}
 
 	// Cas 2 — const vs enum
-	if (aHasConst && isArray(bEnum)) {
-		return !bEnum.some((v) => isEqual(v, aConst));
+	if (aHasConst && Array.isArray(bEnum)) {
+		return !bEnum.some((v) => deepEqual(v, aConst));
 	}
-	if (bHasConst && isArray(aEnum)) {
-		return !aEnum.some((v) => isEqual(v, bConst));
+	if (bHasConst && Array.isArray(aEnum)) {
+		return !aEnum.some((v) => deepEqual(v, bConst));
 	}
 
 	return false;
@@ -115,62 +109,60 @@ function hasDeepConstConflict(
 	if (typeof a === "boolean" || typeof b === "boolean") return false;
 
 	// ── Single sub-schema keywords ──
-	if (
-		some(SINGLE_SCHEMA_CONFLICT_KEYS, (key) => {
-			const aVal = get(a, key) as JSONSchema7Definition | undefined;
-			const bVal = get(b, key) as JSONSchema7Definition | undefined;
-			return (
-				isPlainObject(aVal) &&
-				isPlainObject(bVal) &&
-				hasDeepConstConflict(
-					aVal as JSONSchema7Definition,
-					bVal as JSONSchema7Definition,
-				)
-			);
-		})
-	)
-		return true;
+	for (const key of SINGLE_SCHEMA_CONFLICT_KEYS) {
+		const aVal = (a as Record<string, unknown>)[key] as
+			| JSONSchema7Definition
+			| undefined;
+		const bVal = (b as Record<string, unknown>)[key] as
+			| JSONSchema7Definition
+			| undefined;
+		if (
+			isPlainObj(aVal) &&
+			isPlainObj(bVal) &&
+			hasDeepConstConflict(
+				aVal as JSONSchema7Definition,
+				bVal as JSONSchema7Definition,
+			)
+		) {
+			return true;
+		}
+	}
 
 	// ── Properties-like maps (properties, patternProperties) ──
-	if (
-		some(PROPERTIES_MAP_CONFLICT_KEYS, (key) => {
-			const aMap = get(a, key) as
-				| Record<string, JSONSchema7Definition>
-				| undefined;
-			const bMap = get(b, key) as
-				| Record<string, JSONSchema7Definition>
-				| undefined;
-			if (!isPlainObject(aMap) || !isPlainObject(bMap)) return false;
-			const aMapSafe = aMap as Record<string, JSONSchema7Definition>;
-			const bMapSafe = bMap as Record<string, JSONSchema7Definition>;
-			return some(keys(aMapSafe), (propKey) => {
-				const aVal = aMapSafe[propKey];
-				const bVal = bMapSafe[propKey];
-				return (
-					aVal !== undefined &&
-					bVal !== undefined &&
-					has(bMap, propKey) &&
-					hasDeepConstConflict(aVal, bVal)
-				);
-			});
-		})
-	)
-		return true;
+	for (const key of PROPERTIES_MAP_CONFLICT_KEYS) {
+		const aMap = (a as Record<string, unknown>)[key] as
+			| Record<string, JSONSchema7Definition>
+			| undefined;
+		const bMap = (b as Record<string, unknown>)[key] as
+			| Record<string, JSONSchema7Definition>
+			| undefined;
+		if (!isPlainObj(aMap) || !isPlainObj(bMap)) continue;
+		const aMapSafe = aMap as Record<string, JSONSchema7Definition>;
+		const bMapSafe = bMap as Record<string, JSONSchema7Definition>;
+		for (const propKey of Object.keys(aMapSafe)) {
+			const aVal = aMapSafe[propKey];
+			const bVal = bMapSafe[propKey];
+			if (
+				aVal !== undefined &&
+				bVal !== undefined &&
+				hasOwn(bMapSafe, propKey) &&
+				hasDeepConstConflict(aVal, bVal)
+			) {
+				return true;
+			}
+		}
+	}
 
 	// ── Tuple items (array of schemas, compared by index) ──
-	if (isArray(a.items) && isArray(b.items)) {
+	if (Array.isArray(a.items) && Array.isArray(b.items)) {
+		const aItems = a.items as JSONSchema7Definition[];
 		const bItems = b.items as JSONSchema7Definition[];
-		if (
-			some(a.items as JSONSchema7Definition[], (aItem, idx) => {
-				const bItem = bItems[idx];
-				return (
-					bItem !== undefined &&
-					idx < bItems.length &&
-					hasDeepConstConflict(aItem, bItem)
-				);
-			})
-		)
-			return true;
+		const len = Math.min(aItems.length, bItems.length);
+		for (let i = 0; i < len; i++) {
+			if (hasDeepConstConflict(aItems[i]!, bItems[i]!)) {
+				return true;
+			}
+		}
 	}
 
 	return false;
@@ -219,29 +211,28 @@ function hasAdditionalPropertiesConflict(
 ): boolean {
 	if (typeof a === "boolean" || typeof b === "boolean") return false;
 
-	const aProps = isPlainObject(a.properties)
+	const aProps = isPlainObj(a.properties)
 		? (a.properties as Record<string, JSONSchema7Definition>)
 		: undefined;
-	const bProps = isPlainObject(b.properties)
+	const bProps = isPlainObj(b.properties)
 		? (b.properties as Record<string, JSONSchema7Definition>)
 		: undefined;
 
 	// Si aucun des deux n'a de properties, on ne peut rien déterminer
 	if (!aProps && !bProps) return false;
 
-	const aKeys = aProps ? keys(aProps) : [];
-	const bKeys = bProps ? keys(bProps) : [];
-	const aRequired = isArray(a.required) ? (a.required as string[]) : [];
-	const bRequired = isArray(b.required) ? (b.required as string[]) : [];
+	const aKeys = aProps ? Object.keys(aProps) : [];
+	const bKeys = bProps ? Object.keys(bProps) : [];
+	const aRequired = Array.isArray(a.required) ? (a.required as string[]) : [];
+	const bRequired = Array.isArray(b.required) ? (b.required as string[]) : [];
 
 	// ── Vérifier additionalProperties: false de a vs propriétés REQUISES extra de b ──
 	// Condition stricte : b doit DÉFINIR la propriété dans b.properties ET la
 	// REQUÉRIR dans b.required, ET cette propriété doit être ABSENTE de a.properties.
 	// De plus, a doit lui-même avoir des propriétés (sinon on ne peut rien dire).
 	if (a.additionalProperties === false && aProps && bProps) {
-		const hasRequiredExtra = some(
-			bRequired,
-			(k) => !has(aProps, k) && has(bProps, k),
+		const hasRequiredExtra = bRequired.some(
+			(k) => !hasOwn(aProps, k) && hasOwn(bProps, k),
 		);
 		// Ne détecter le conflit que si a a aussi un required qui rend l'objet
 		// structurellement contraint (pas un schema vague)
@@ -252,21 +243,21 @@ function hasAdditionalPropertiesConflict(
 	// Si a.additionalProperties est un schema avec un type, et que b REQUIERT
 	// une propriété extra dont le type est incompatible → conflit
 	if (
-		isPlainObject(a.additionalProperties) &&
+		isPlainObj(a.additionalProperties) &&
 		typeof a.additionalProperties !== "boolean" &&
 		aProps &&
 		bProps
 	) {
 		const addPropsSchema = a.additionalProperties as JSONSchema7;
-		if (has(addPropsSchema, "type")) {
+		if (hasOwn(addPropsSchema, "type")) {
 			const addPropsType = addPropsSchema.type;
-			const hasTypeConflict = some(bRequired, (k) => {
-				if (has(aProps, k)) return false;
-				if (!has(bProps, k)) return false;
+			const hasTypeConflict = bRequired.some((k) => {
+				if (hasOwn(aProps, k)) return false;
+				if (!hasOwn(bProps, k)) return false;
 				const bPropDef = bProps[k];
 				if (typeof bPropDef === "boolean") return false;
 				const bProp = bPropDef as JSONSchema7;
-				if (!has(bProp, "type")) return false;
+				if (!hasOwn(bProp, "type")) return false;
 				if (
 					typeof addPropsType === "string" &&
 					typeof bProp.type === "string"
@@ -285,30 +276,29 @@ function hasAdditionalPropertiesConflict(
 
 	// ── Vérification symétrique : additionalProperties de b vs propriétés REQUISES extra de a ──
 	if (b.additionalProperties === false && bProps && aProps) {
-		const hasRequiredExtra = some(
-			aRequired,
-			(k) => !has(bProps, k) && has(aProps, k),
+		const hasRequiredExtra = aRequired.some(
+			(k) => !hasOwn(bProps, k) && hasOwn(aProps, k),
 		);
 		if (hasRequiredExtra && bKeys.length > 0) return true;
 	}
 
 	// Symétrique pour additionalProperties comme schema
 	if (
-		isPlainObject(b.additionalProperties) &&
+		isPlainObj(b.additionalProperties) &&
 		typeof b.additionalProperties !== "boolean" &&
 		bProps &&
 		aProps
 	) {
 		const addPropsSchema = b.additionalProperties as JSONSchema7;
-		if (has(addPropsSchema, "type")) {
+		if (hasOwn(addPropsSchema, "type")) {
 			const addPropsType = addPropsSchema.type;
-			const hasTypeConflict = some(aRequired, (k) => {
-				if (has(bProps, k)) return false;
-				if (!has(aProps, k)) return false;
+			const hasTypeConflict = aRequired.some((k) => {
+				if (hasOwn(bProps, k)) return false;
+				if (!hasOwn(aProps, k)) return false;
 				const aPropDef = aProps[k];
 				if (typeof aPropDef === "boolean") return false;
 				const aProp = aPropDef as JSONSchema7;
-				if (!has(aProp, "type")) return false;
+				if (!hasOwn(aProp, "type")) return false;
 				if (
 					typeof addPropsType === "string" &&
 					typeof aProp.type === "string"
@@ -329,20 +319,21 @@ function hasAdditionalPropertiesConflict(
 	// Si les deux schemas ont des propriétés communes qui sont des objets,
 	// vérifier récursivement les conflits additionalProperties
 	if (aProps && bProps) {
-		if (
-			some(aKeys, (k) => {
-				if (!has(bProps, k)) return false;
-				const aPropDef = aProps[k];
-				const bPropDef = bProps[k];
-				if (typeof aPropDef === "boolean" || typeof bPropDef === "boolean")
-					return false;
-				return hasAdditionalPropertiesConflict(
+		for (const k of aKeys) {
+			if (!hasOwn(bProps, k)) continue;
+			const aPropDef = aProps[k];
+			const bPropDef = bProps[k];
+			if (typeof aPropDef === "boolean" || typeof bPropDef === "boolean")
+				continue;
+			if (
+				hasAdditionalPropertiesConflict(
 					aPropDef as JSONSchema7Definition,
 					bPropDef as JSONSchema7Definition,
-				);
-			})
-		)
-			return true;
+				)
+			) {
+				return true;
+			}
+		}
 	}
 
 	return false;
@@ -376,7 +367,7 @@ function hasFormatConflict(
 
 	// ── Seulement quand LES DEUX ont un format ──
 	// Si un seul a un format → pas de conflit, le merge gère nativement
-	if (has(a, "format") && has(b, "format")) {
+	if (hasOwn(a, "format") && hasOwn(b, "format")) {
 		const aFormat = a.format as string;
 		const bFormat = b.format as string;
 
@@ -396,26 +387,25 @@ function hasFormatConflict(
 
 	// ── Récursion dans les sous-schemas ──
 	// Vérifier les conflits de format dans les propriétés communes
-	if (isPlainObject(a.properties) && isPlainObject(b.properties)) {
+	if (isPlainObj(a.properties) && isPlainObj(b.properties)) {
 		const aMap = a.properties as Record<string, JSONSchema7Definition>;
 		const bMap = b.properties as Record<string, JSONSchema7Definition>;
-		if (
-			some(keys(aMap), (k) => {
-				const aVal = aMap[k];
-				const bVal = bMap[k];
-				return (
-					aVal !== undefined &&
-					bVal !== undefined &&
-					has(bMap, k) &&
-					hasFormatConflict(aVal, bVal)
-				);
-			})
-		)
-			return true;
+		for (const k of Object.keys(aMap)) {
+			const aVal = aMap[k];
+			const bVal = bMap[k];
+			if (
+				aVal !== undefined &&
+				bVal !== undefined &&
+				hasOwn(bMap, k) &&
+				hasFormatConflict(aVal, bVal)
+			) {
+				return true;
+			}
+		}
 	}
 
 	// Vérifier items (single schema)
-	if (isPlainObject(a.items) && isPlainObject(b.items)) {
+	if (isPlainObj(a.items) && isPlainObj(b.items)) {
 		if (
 			hasFormatConflict(
 				a.items as JSONSchema7Definition,
@@ -427,8 +417,8 @@ function hasFormatConflict(
 
 	// Vérifier additionalProperties
 	if (
-		isPlainObject(a.additionalProperties) &&
-		isPlainObject(b.additionalProperties)
+		isPlainObj(a.additionalProperties) &&
+		isPlainObj(b.additionalProperties)
 	) {
 		if (
 			hasFormatConflict(

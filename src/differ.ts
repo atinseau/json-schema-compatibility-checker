@@ -1,11 +1,6 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import flatMap from "lodash/flatMap";
-import isArray from "lodash/isArray";
-import isEqual from "lodash/isEqual";
-import isPlainObject from "lodash/isPlainObject";
-import keys from "lodash/keys";
-import union from "lodash/union";
 import type { SchemaDiff } from "./types";
+import { deepEqual, isPlainObj, unionStrings } from "./utils";
 
 // ─── Schema Differ ───────────────────────────────────────────────────────────
 //
@@ -13,15 +8,7 @@ import type { SchemaDiff } from "./types";
 // intersection (merged). Utilisé pour produire des diagnostics lisibles
 // quand sub ⊄ sup.
 //
-// Utilise lodash massivement :
-//   - `_.isEqual`       pour la comparaison profonde (remplace JSON.stringify — Point 9)
-//   - `_.union`         pour fusionner les ensembles de clés
-//   - `_.keys`          pour extraire les clés d'un objet
-//   - `_.isPlainObject` pour détecter les sous-schemas récursables
-//   - `_.isArray`       pour distinguer tableaux de strings vs schemas dans `dependencies`
-//   - `_.has`           pour vérifier l'existence d'une clé
-//   - `_.flatMap`       pour aplatir les diffs récursifs
-//   - `_.forEach`       pour itérer sur les clés
+// Utilise des méthodes natives JS pour des performances optimales.
 
 // ─── Recursive diff keys ─────────────────────────────────────────────────────
 
@@ -39,11 +26,13 @@ const RECURSIVE_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Mots-clés dont la valeur est un `Record<string, JSONSchema7Definition>`
- * — chaque entrée est un sous-schema dans lequel on doit récurser
- * individuellement (properties, patternProperties, dependencies).
+ * Mots-clés dont la valeur est un `Record<string, JSONSchema7Definition>`.
+ * Chaque propriété est un sous-schema → récursion au niveau des clés.
  *
- * Point 2 — patternProperties ajouté ici.
+ * `dependencies` est inclus ici avec une gestion spéciale (forme tableau
+ * vs forme schema) dans
+ `computePropertyDiffs`.
+ *
  * Point 3 — dependencies ajouté ici (avec gestion spéciale forme tableau).
  */
 const PROPERTIES_LIKE_KEYS: ReadonlySet<string> = new Set([
@@ -55,8 +44,8 @@ const PROPERTIES_LIKE_KEYS: ReadonlySet<string> = new Set([
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 /**
- * Vérifie si un mot-clé pointe vers un sous-schema unique récursable.
- * Utilise `_.isPlainObject` pour s'assurer que les deux valeurs sont
+ * Vérifie si on peut récurser dans un mot-clé single-schema :
+ * la clé doit être dans RECURSIVE_KEYS et les deux valeurs doivent être
  * des objets (pas des tableaux, pas null).
  */
 function canRecurseInto(
@@ -65,15 +54,12 @@ function canRecurseInto(
 	mergedVal: unknown,
 ): boolean {
 	return (
-		RECURSIVE_KEYS.has(key) &&
-		isPlainObject(origVal) &&
-		isPlainObject(mergedVal)
+		RECURSIVE_KEYS.has(key) && isPlainObj(origVal) && isPlainObj(mergedVal)
 	);
 }
 
 /**
- * Vérifie si un mot-clé pointe vers un objet de propriétés
- * (`properties`, `patternProperties`, `dependencies`).
+ * Vérifie si un mot-clé est un objet de propriétés récursable.
  *
  * Utilise `_.includes` sur le Set pour une vérification concise.
  */
@@ -84,23 +70,22 @@ function isPropertiesLikeObject(
 ): boolean {
 	return (
 		PROPERTIES_LIKE_KEYS.has(key) &&
-		isPlainObject(origVal) &&
-		isPlainObject(mergedVal)
+		isPlainObj(origVal) &&
+		isPlainObj(mergedVal)
 	);
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Calcule les différences structurelles entre le schema original et le schema
- * mergé (intersection). Récurse dans properties, patternProperties,
- * dependencies et les sous-schemas.
+ * Compare un schema original avec sa version mergée et retourne la liste
+ * des différences structurelles.
  *
- * @param original  Le schema original (sub)
+ * @param original  Le schema sub tel qu'il était avant le merge
  * @param merged    Le schema résultant de l'intersection allOf(sub, sup)
  * @param path      Chemin JSON-path courant (vide à la racine)
  *
- * Point 9 — Utilise `_.isEqual` au lieu de `JSON.stringify` pour comparer
+ * Point 9 — Utilise `deepEqual` au lieu de `JSON.stringify` pour comparer
  * les valeurs, ce qui élimine la dépendance à l'ordre des clés.
  */
 export function computeDiffs(
@@ -123,93 +108,94 @@ export function computeDiffs(
 		return [];
 	}
 
-	// Collecter toutes les clés des deux schemas via `_.union` + `_.keys`
-	const allKeys = union(keys(original), keys(merged)) as (keyof JSONSchema7)[];
+	// Collecter toutes les clés des deux schemas
+	const allKeys = unionStrings(
+		Object.keys(original),
+		Object.keys(merged),
+	) as (keyof JSONSchema7)[];
 
-	return flatMap(allKeys, (key): SchemaDiff[] => {
+	const result: SchemaDiff[] = [];
+	for (const key of allKeys) {
 		const currentPath = path ? `${path}.${key}` : key;
 		const origVal = original[key];
 		const mergedVal = merged[key];
 
 		// Clé ajoutée par le merge
 		if (origVal === undefined && mergedVal !== undefined) {
-			return [
-				{
-					path: currentPath,
-					type: "added",
-					expected: undefined,
-					actual: mergedVal,
-				},
-			];
+			result.push({
+				path: currentPath,
+				type: "added",
+				expected: undefined,
+				actual: mergedVal,
+			});
+			continue;
 		}
 
 		// Clé supprimée par le merge
 		if (origVal !== undefined && mergedVal === undefined) {
-			return [
-				{
-					path: currentPath,
-					type: "removed",
-					expected: origVal,
-					actual: undefined,
-				},
-			];
+			result.push({
+				path: currentPath,
+				type: "removed",
+				expected: origVal,
+				actual: undefined,
+			});
+			continue;
 		}
 
 		// Les deux sont définies — vérifier si elles diffèrent
-		// Point 9 : `_.isEqual` remplace `JSON.stringify` pour une comparaison
-		// profonde indépendante de l'ordre des clés
+		// Point 9 : deepEqual pour une comparaison profonde indépendante de l'ordre des clés
 		if (
 			origVal !== undefined &&
 			mergedVal !== undefined &&
-			!isEqual(origVal, mergedVal)
+			!deepEqual(origVal, mergedVal)
 		) {
 			// Récurser dans les sous-schemas uniques
 			if (canRecurseInto(key, origVal, mergedVal)) {
-				return computeDiffs(
+				const sub = computeDiffs(
 					origVal as JSONSchema7Definition,
 					mergedVal as JSONSchema7Definition,
 					currentPath,
 				);
+				for (const d of sub) result.push(d);
+				continue;
 			}
 
 			// Récurser dans les objets de propriétés (properties, patternProperties, dependencies)
 			if (isPropertiesLikeObject(key, origVal, mergedVal)) {
-				return computePropertyDiffs(
+				const sub = computePropertyDiffs(
 					origVal as Record<string, JSONSchema7Definition>,
 					mergedVal as Record<string, JSONSchema7Definition>,
 					currentPath,
 					key,
 				);
+				for (const d of sub) result.push(d);
+				continue;
 			}
 
 			// Valeur scalaire ou structure non-récursable
-			return [
-				{
-					path: currentPath,
-					type: "changed",
-					expected: origVal,
-					actual: mergedVal,
-				},
-			];
+			result.push({
+				path: currentPath,
+				type: "changed",
+				expected: origVal,
+				actual: mergedVal,
+			});
 		}
+	}
 
-		// Pas de diff pour cette clé
-		return [];
-	});
+	return result;
 }
 
 // ─── Property-level diffs ────────────────────────────────────────────────────
 
 /**
- * Calcule les diffs pour un objet de type `properties` / `patternProperties` /
- * `dependencies`, en récursant dans chaque entrée via `computeDiffs`.
+ * Calcule les diffs au niveau des propriétés d'un objet `properties`,
+ * `patternProperties`, ou `dependencies`.
  *
- * Point 3 — Pour `dependencies`, gère les deux formes :
- *   - Forme 1 (tableau de strings) : comparaison directe via `_.isEqual`
+ * Pour `dependencies` (Point 3), gère les deux formes :
+ *   - Forme 1 (tableau de strings) : comparaison directe via `deepEqual`
  *   - Forme 2 (sous-schema) : récursion via `computeDiffs`
  *
- * Utilise `_.union` + `_.keys` pour fusionner les clés des deux côtés,
- * et `_.flatMap` pour produire un tableau aplati de diffs.
+ * Fusionne les clés des deux côtés et produit un tableau aplati de diffs.
  */
 function computePropertyDiffs(
 	original: Record<string, JSONSchema7Definition | string[]>,
@@ -217,33 +203,32 @@ function computePropertyDiffs(
 	basePath: string,
 	parentKey: string,
 ): SchemaDiff[] {
-	const allPropKeys = union(keys(original), keys(merged));
+	const allPropKeys = unionStrings(Object.keys(original), Object.keys(merged));
 
-	return flatMap(allPropKeys, (key): SchemaDiff[] => {
+	const result: SchemaDiff[] = [];
+	for (const key of allPropKeys) {
 		const currentPath = `${basePath}.${key}`;
 		const origVal = original[key];
 		const mergedVal = merged[key];
 
 		if (origVal === undefined && mergedVal !== undefined) {
-			return [
-				{
-					path: currentPath,
-					type: "added",
-					expected: undefined,
-					actual: mergedVal,
-				},
-			];
+			result.push({
+				path: currentPath,
+				type: "added",
+				expected: undefined,
+				actual: mergedVal,
+			});
+			continue;
 		}
 
 		if (origVal !== undefined && mergedVal === undefined) {
-			return [
-				{
-					path: currentPath,
-					type: "removed",
-					expected: origVal,
-					actual: undefined,
-				},
-			];
+			result.push({
+				path: currentPath,
+				type: "removed",
+				expected: origVal,
+				actual: undefined,
+			});
+			continue;
 		}
 
 		if (origVal !== undefined && mergedVal !== undefined) {
@@ -251,30 +236,29 @@ function computePropertyDiffs(
 			// On ne récurse que si les deux valeurs sont des objets (sous-schemas)
 			if (
 				parentKey === "dependencies" &&
-				(isArray(origVal) || isArray(mergedVal))
+				(Array.isArray(origVal) || Array.isArray(mergedVal))
 			) {
 				// Comparaison directe pour les tableaux de strings
-				if (!isEqual(origVal, mergedVal)) {
-					return [
-						{
-							path: currentPath,
-							type: "changed",
-							expected: origVal,
-							actual: mergedVal,
-						},
-					];
+				if (!deepEqual(origVal, mergedVal)) {
+					result.push({
+						path: currentPath,
+						type: "changed",
+						expected: origVal,
+						actual: mergedVal,
+					});
 				}
-				return [];
+				continue;
 			}
 
 			// Récursion standard pour les sous-schemas
-			return computeDiffs(
+			const sub = computeDiffs(
 				origVal as JSONSchema7Definition,
 				mergedVal as JSONSchema7Definition,
 				currentPath,
 			);
+			for (const d of sub) result.push(d);
 		}
+	}
 
-		return [];
-	});
+	return result;
 }

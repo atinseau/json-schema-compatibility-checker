@@ -6,7 +6,6 @@ import {
 	isURL,
 	isUUID,
 } from "class-validator";
-import includes from "lodash/includes";
 
 // ─── Format Validator ─────────────────────────────────────────────────────────
 //
@@ -302,7 +301,7 @@ export function isFormatSubset(
 
 	// Hiérarchie : vérifier si sup est un sur-ensemble connu de sub
 	const supersets = FORMAT_SUPERSETS[subFormat];
-	if (supersets && includes(supersets, supFormat)) {
+	if (supersets?.includes(supFormat)) {
 		return true;
 	}
 

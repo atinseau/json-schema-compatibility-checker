@@ -36,10 +36,11 @@ describe("if/then/else — structural limitations", () => {
 		},
 	};
 
-	test("identity A ⊆ A fails when schema has if/then/else (known limitation)", () => {
-		// The merge pushes the second copy's conditions into allOf,
-		// making merged ≠ original structurally.
-		expect(checker.isSubset(conditionalSchema, conditionalSchema)).toBe(false);
+	test("identity A ⊆ A with if/then/else (fixed by identity short-circuit)", () => {
+		// Previously failed because merge pushes conditions into allOf,
+		// making merged ≠ original. Now fixed: identity short-circuit
+		// detects that sub === sup (same reference) and returns true directly.
+		expect(checker.isSubset(conditionalSchema, conditionalSchema)).toBe(true);
 	});
 
 	test("sub WITH if/then/else ⊆ sup WITHOUT condition works (conditions are extra constraints)", () => {
@@ -89,12 +90,12 @@ describe("if/then/else — structural limitations", () => {
 		expect(result.diffs.some((d) => d.path === "if")).toBe(true);
 	});
 
-	test("both schemas with same conditions produce false (allOf residual)", () => {
+	test("both schemas with same conditions (fixed by identity short-circuit)", () => {
 		const result = checker.check(conditionalSchema, conditionalSchema);
-		expect(result.isSubset).toBe(false);
-
-		// The merge produces an allOf with the duplicate conditions
-		expect(result.diffs.some((d) => d.path === "allOf")).toBe(true);
+		// Previously failed because merge produces allOf residual.
+		// Now fixed: identity short-circuit detects same reference → true.
+		expect(result.isSubset).toBe(true);
+		expect(result.diffs).toHaveLength(0);
 	});
 
 	test("both schemas with different conditions produce false", () => {
@@ -235,11 +236,12 @@ describe("if/then/else — pure subset check (no data)", () => {
 		},
 	};
 
-	test("A ⊆ A identity FAILS with if/then/else (known limitation)", () => {
-		// This is the most fundamental property that should hold but doesn't
+	test("A ⊆ A identity with if/then/else (fixed by identity short-circuit)", () => {
+		// Identity should always hold. Previously failed due to merge artifacts
+		// with if/then/else. Now fixed by identity short-circuit: same reference
+		// or structurally equal after normalization → true without merge.
 		const result = checker.isSubset(conditionalSchema, conditionalSchema);
-		// Identity should be true, but if/then/else causes merge artifacts
-		expect(result).toBe(false); // KNOWN LIMITATION
+		expect(result).toBe(true);
 	});
 
 	test("sub WITH conditions ⊆ sup WITHOUT conditions — works (conditions restrict)", () => {
@@ -392,7 +394,7 @@ describe("if/then/else — pure subset check (no data)", () => {
 		expect(checker.isSubset(sub, strippedSup)).toBe(true);
 	});
 
-	test("nested if/then/else in properties — also not resolved in pure check", () => {
+	test("nested if/then/else in properties — fixed by identity short-circuit", () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -412,11 +414,12 @@ describe("if/then/else — pure subset check (no data)", () => {
 
 		// Identity check on schema with nested conditions
 		const result = checker.isSubset(schema, schema);
-		// Nested if/then/else also causes issues
-		expect(result).toBe(false); // KNOWN LIMITATION
+		// Previously failed due to nested if/then/else merge artifacts.
+		// Now fixed: identity short-circuit detects same reference → true.
+		expect(result).toBe(true);
 	});
 
-	test("allOf containing if/then/else — also opaque in pure check", () => {
+	test("allOf containing if/then/else — fixed by identity short-circuit", () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: { x: { type: "string" } },
@@ -429,6 +432,8 @@ describe("if/then/else — pure subset check (no data)", () => {
 		};
 
 		const result = checker.isSubset(schema, schema);
-		expect(result).toBe(false); // KNOWN LIMITATION
+		// Previously failed due to allOf merge artifacts with if/then/else.
+		// Now fixed: identity short-circuit detects same reference → true.
+		expect(result).toBe(true);
 	});
 });

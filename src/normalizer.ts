@@ -1,19 +1,5 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import compact from "lodash/compact";
-import first from "lodash/first";
-import has from "lodash/has";
-import isArray from "lodash/isArray";
-import isEmpty from "lodash/isEmpty";
-import isEqual from "lodash/isEqual";
-import isPlainObject from "lodash/isPlainObject";
-import keys from "lodash/keys";
-import map from "lodash/map";
-import mapValues from "lodash/mapValues";
-import omit from "lodash/omit";
-import reduce from "lodash/reduce";
-import size from "lodash/size";
-import some from "lodash/some";
-import uniq from "lodash/uniq";
+import { deepEqual, hasOwn, isPlainObj } from "./utils";
 
 // ─── Schema Normalizer ───────────────────────────────────────────────────────
 //
@@ -24,8 +10,9 @@ import uniq from "lodash/uniq";
 //   - Récurser dans `patternProperties` (Point 2)
 //   - Récurser dans `dependencies` forme schema (Point 3)
 //
-// Utilise lodash massivement pour réduire la complexité et améliorer
-// la lisibilité des transformations sur les objets et tableaux.
+// Utilise des méthodes natives JS pour des performances optimales.
+// Les mutations sont faites in-place sur une copie shallow du schema d'entrée
+// pour éviter les allocations inutiles de spreads répétés.
 
 // ─── Type inference ──────────────────────────────────────────────────────────
 
@@ -42,7 +29,7 @@ export function inferType(value: unknown): string | undefined {
 		case "boolean":
 			return "boolean";
 		case "object":
-			return isArray(value) ? "array" : "object";
+			return Array.isArray(value) ? "array" : "object";
 		default:
 			return undefined;
 	}
@@ -90,7 +77,7 @@ const METADATA_KEYWORDS = new Set([
  * (plus éventuellement des métadonnées non significatives).
  */
 function isPureNotSchema(schema: JSONSchema7): boolean {
-	const schemaKeys = keys(schema);
+	const schemaKeys = Object.keys(schema);
 	return schemaKeys.every((k) => k === "not" || METADATA_KEYWORDS.has(k));
 }
 
@@ -107,12 +94,25 @@ const PROPERTIES_LIKE_KEYWORDS = ["properties", "patternProperties"] as const;
 
 /**
  * Normalise un `Record<string, JSONSchema7Definition>` en appliquant
- * `normalize` à chaque valeur via `lodash/mapValues`.
+ * `normalize` à chaque valeur.
+ * Retourne l'objet original si rien n'a changé (évite les allocations).
  */
 function normalizePropertiesMap(
 	props: Record<string, JSONSchema7Definition>,
 ): Record<string, JSONSchema7Definition> {
-	return mapValues(props, (v) => normalize(v as JSONSchema7Definition));
+	const keys = Object.keys(props);
+	let changed = false;
+	const result: Record<string, JSONSchema7Definition> = {};
+
+	for (let i = 0; i < keys.length; i++) {
+		const key = keys[i]!;
+		const original = props[key];
+		const normalized = normalize(original as JSONSchema7Definition);
+		result[key] = normalized;
+		if (normalized !== original) changed = true;
+	}
+
+	return changed ? result : props;
 }
 
 /**
@@ -122,7 +122,7 @@ function normalizePropertiesMap(
 function inferTypeFromConst(
 	schema: JSONSchema7,
 ): JSONSchema7["type"] | undefined {
-	if (!has(schema, "const") || schema.type !== undefined) return undefined;
+	if (!hasOwn(schema, "const") || schema.type !== undefined) return undefined;
 	const t = inferType(schema.const);
 	return t ? (t as JSONSchema7["type"]) : undefined;
 }
@@ -134,14 +134,21 @@ function inferTypeFromConst(
 function inferTypeFromEnum(
 	schema: JSONSchema7,
 ): JSONSchema7["type"] | undefined {
-	if (!isArray(schema.enum) || schema.type !== undefined) return undefined;
+	if (!Array.isArray(schema.enum) || schema.type !== undefined)
+		return undefined;
 
-	const types = uniq(compact(map(schema.enum, (v) => inferType(v))));
-	const count = size(types);
+	const typesSet = new Set<string>();
+	for (const v of schema.enum) {
+		const t = inferType(v);
+		if (t) typesSet.add(t);
+	}
 
-	if (count === 1) return first(types) as JSONSchema7["type"];
-	if (count > 1) return types as JSONSchema7["type"];
-	return undefined;
+	const count = typesSet.size;
+	if (count === 0) return undefined;
+
+	const types = Array.from(typesSet);
+	if (count === 1) return types[0] as JSONSchema7["type"];
+	return types as JSONSchema7["type"];
 }
 
 // ─── Normalization ───────────────────────────────────────────────────────────
@@ -151,17 +158,23 @@ function inferTypeFromEnum(
  * et normalise récursivement tous les sous-schemas.
  *
  * Récurse dans :
- *   - `properties` et `patternProperties` (Point 2) via `_.mapValues`
+ *   - `properties` et `patternProperties` (Point 2)
  *   - `dependencies` forme schema (Point 3) — les valeurs tableau (forme 1)
  *     sont laissées intactes
  *   - `items` (single ou tuple)
  *   - Mots-clés single-schema (`additionalProperties`, `not`, `if`, etc.)
  *   - Mots-clés array-of-schema (`anyOf`, `oneOf`, `allOf`)
+ *
+ * Optimisation : on fait une seule copie shallow au début, puis on mute
+ * in-place au lieu de créer un nouvel objet à chaque modification.
+ * Les sous-structures (properties, items, etc.) ne sont remplacées
+ * que si elles ont effectivement changé.
  */
 export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 	if (typeof def === "boolean") return def;
 
-	let schema = { ...def };
+	// Single shallow copy — all mutations happen on this object
+	const schema = { ...def } as JSONSchema7 & Record<string, unknown>;
 
 	// ── Inférer type depuis const ──
 	const typeFromConst = inferTypeFromConst(schema);
@@ -181,37 +194,34 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 	// (isEqual) ne produit pas de faux négatifs quand un schema utilise
 	// enum et l'autre utilise const pour la même valeur.
 	if (
-		isArray(schema.enum) &&
-		size(schema.enum) === 1 &&
-		!has(schema, "const")
+		Array.isArray(schema.enum) &&
+		schema.enum.length === 1 &&
+		!hasOwn(schema, "const")
 	) {
-		schema = {
-			...(omit(schema, ["enum"]) as JSONSchema7),
-			const: schema.enum[0],
-		};
+		schema.const = schema.enum[0];
+		delete schema.enum;
 	}
 
 	// ── Strip redundant enum when const is present ──
 	// Si `const: X` et `enum: [... X ...]` coexistent, `const` est plus
 	// restrictif → `enum` est redondant. Le merge engine peut produire
 	// cette combinaison lors de l'intersection const ∩ enum.
-	if (has(schema, "const") && isArray(schema.enum)) {
-		if (some(schema.enum, (v) => isEqual(v, schema.const))) {
-			schema = omit(schema, ["enum"]) as JSONSchema7;
+	if (hasOwn(schema, "const") && Array.isArray(schema.enum)) {
+		if (schema.enum.some((v) => deepEqual(v, schema.const))) {
+			delete schema.enum;
 		}
 	}
 
 	// ── Récurser dans properties & patternProperties (Point 2) ──
-	// Utilise `_.mapValues` pour transformer chaque sous-schema en une seule passe
 	for (const keyword of PROPERTIES_LIKE_KEYWORDS) {
 		const val = schema[keyword];
-		if (isPlainObject(val)) {
-			schema = {
-				...schema,
-				[keyword]: normalizePropertiesMap(
-					val as Record<string, JSONSchema7Definition>,
-				),
-			};
+		if (isPlainObj(val)) {
+			const normalized = normalizePropertiesMap(
+				val as Record<string, JSONSchema7Definition>,
+			);
+			if (normalized !== val) {
+				schema[keyword] = normalized as JSONSchema7["properties"];
+			}
 		}
 	}
 
@@ -219,58 +229,74 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 	// `dependencies` peut contenir :
 	//   - Forme 1 (property deps) : { foo: ["bar", "baz"] } → tableau de strings, on skip
 	//   - Forme 2 (schema deps) : { foo: { required: [...] } } → objet schema, on normalise
-	if (isPlainObject(schema.dependencies)) {
-		schema = {
-			...schema,
-			dependencies: mapValues(
-				schema.dependencies as Record<string, JSONSchema7Definition | string[]>,
-				(val) => {
-					// Forme 1 : tableau de strings → laisser tel quel
-					if (isArray(val)) return val;
-					// Forme 2 : sous-schema → normaliser récursivement
-					if (isPlainObject(val))
-						return normalize(val as JSONSchema7Definition);
-					return val;
-				},
-			),
-		};
+	if (isPlainObj(schema.dependencies)) {
+		const deps = schema.dependencies as Record<
+			string,
+			JSONSchema7Definition | string[]
+		>;
+		const depsKeys = Object.keys(deps);
+		let depsChanged = false;
+		const newDeps: Record<string, JSONSchema7Definition | string[]> = {};
+
+		for (let i = 0; i < depsKeys.length; i++) {
+			const key = depsKeys[i]!;
+			const val = deps[key];
+			if (val === undefined) continue;
+			if (Array.isArray(val)) {
+				// Forme 1 : tableau de strings → laisser tel quel
+				newDeps[key] = val;
+			} else if (isPlainObj(val)) {
+				// Forme 2 : sous-schema → normaliser récursivement
+				const normalized = normalize(val as JSONSchema7Definition);
+				newDeps[key] = normalized;
+				if (normalized !== val) depsChanged = true;
+			} else {
+				newDeps[key] = val as JSONSchema7Definition;
+			}
+		}
+
+		if (depsChanged) {
+			schema.dependencies = newDeps;
+		}
 	}
 
 	// ── Récurser dans items (tuple ou single) ──
 	if (schema.items) {
-		if (isArray(schema.items)) {
-			// Tuple : normaliser chaque élément via `_.map`
-			schema = {
-				...schema,
-				items: map(schema.items as JSONSchema7Definition[], (it) =>
-					normalize(it),
-				),
-			};
-		} else if (isPlainObject(schema.items)) {
+		if (Array.isArray(schema.items)) {
+			// Tuple : normaliser chaque élément
+			const items = schema.items as JSONSchema7Definition[];
+			let itemsChanged = false;
+			const newItems: JSONSchema7Definition[] = new Array(items.length);
+
+			for (let i = 0; i < items.length; i++) {
+				const original = items[i]!;
+				const normalized = normalize(original);
+				newItems[i] = normalized;
+				if (normalized !== original) itemsChanged = true;
+			}
+
+			if (itemsChanged) {
+				schema.items = newItems;
+			}
+		} else if (isPlainObj(schema.items)) {
 			// Single items schema
-			schema = {
-				...schema,
-				items: normalize(schema.items as JSONSchema7Definition),
-			};
+			const normalized = normalize(schema.items as JSONSchema7Definition);
+			if (normalized !== schema.items) {
+				schema.items = normalized;
+			}
 		}
 	}
 
 	// ── Récurser dans les mots-clés single-schema ──
-	// Utilise `_.reduce` pour accumuler les transformations en une seule passe
-	schema = reduce(
-		SINGLE_SCHEMA_KEYWORDS,
-		(acc, key) => {
-			const val = acc[key];
-			if (val !== undefined && typeof val !== "boolean") {
-				return {
-					...acc,
-					[key]: normalize(val as JSONSchema7Definition),
-				};
+	for (const key of SINGLE_SCHEMA_KEYWORDS) {
+		const val = schema[key];
+		if (val !== undefined && typeof val !== "boolean") {
+			const normalized = normalize(val as JSONSchema7Definition);
+			if (normalized !== val) {
+				schema[key] = normalized as any;
 			}
-			return acc;
-		},
-		schema,
-	);
+		}
+	}
 
 	// ── Résoudre la double négation not(not(X)) → X ──
 	// Après la récursion dans les sous-schemas, `schema.not` est normalisé.
@@ -282,47 +308,52 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 	// On ne résout que le cas « pur » (schema.not n'a que `not` comme clé
 	// significative) pour éviter les faux-positifs dans les cas complexes.
 	if (
-		has(schema, "not") &&
-		isPlainObject(schema.not) &&
+		hasOwn(schema, "not") &&
+		isPlainObj(schema.not) &&
 		typeof schema.not !== "boolean"
 	) {
 		const notSchema = schema.not as JSONSchema7;
 		if (
-			has(notSchema, "not") &&
+			hasOwn(notSchema, "not") &&
 			isPureNotSchema(notSchema) &&
-			isPlainObject(notSchema.not) &&
+			isPlainObj(notSchema.not) &&
 			typeof notSchema.not !== "boolean"
 		) {
 			// Extraire le contenu de not.not et le fusionner avec le reste du schema
 			const innerSchema = notSchema.not as JSONSchema7;
-			// Retirer `not` du schema courant et spreader le contenu interne
-			const withoutNot = omit(schema, ["not"]) as JSONSchema7;
-			// Si le schema courant n'avait QUE `not` → remplacer entièrement par le contenu interne
-			if (isEmpty(keys(withoutNot))) {
-				schema = { ...innerSchema };
-			} else {
-				// Le schema a d'autres contraintes → fusionner (allOf implicite)
-				schema = { ...withoutNot, ...innerSchema };
+			// Retirer `not` du schema courant
+			delete schema.not;
+			// Fusionner le contenu interne dans le schema courant
+			const innerKeys = Object.keys(innerSchema);
+			for (let i = 0; i < innerKeys.length; i++) {
+				const ik = innerKeys[i]!;
+				(schema as Record<string, unknown>)[ik] = (
+					innerSchema as Record<string, unknown>
+				)[ik];
 			}
 		}
 	}
 
 	// ── Récurser dans les mots-clés array-of-schema ──
-	// Utilise `_.reduce` + `_.map` pour transformer chaque branche
-	schema = reduce(
-		ARRAY_SCHEMA_KEYWORDS,
-		(acc, key) => {
-			const val = acc[key];
-			if (isArray(val)) {
-				return {
-					...acc,
-					[key]: map(val as JSONSchema7Definition[], (s) => normalize(s)),
-				};
-			}
-			return acc;
-		},
-		schema,
-	);
+	for (const key of ARRAY_SCHEMA_KEYWORDS) {
+		const val = schema[key];
+		if (Array.isArray(val)) {
+			const arr = val as JSONSchema7Definition[];
+			let arrChanged = false;
+			const newArr: JSONSchema7Definition[] = new Array(arr.length);
 
-	return schema;
+			for (let i = 0; i < arr.length; i++) {
+				const original = arr[i]!;
+				const normalized = normalize(original);
+				newArr[i] = normalized;
+				if (normalized !== original) arrChanged = true;
+			}
+
+			if (arrChanged) {
+				schema[key] = newArr;
+			}
+		}
+	}
+
+	return schema as JSONSchema7Definition;
 }

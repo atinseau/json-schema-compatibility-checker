@@ -40,65 +40,133 @@ const MAX_GENERATED_LENGTH = 100;
 /** Nombre maximal de répétitions pour les quantificateurs unbounded (*, +, {n,}) */
 const MAX_REPETITION = 20;
 
+// ─── Result Cache ────────────────────────────────────────────────────────────
+
+/**
+ * Cache des résultats de isPatternSubset pour éviter de recalculer
+ * les mêmes comparaisons. La clé est `${subPattern}\0${supPattern}\0${sampleCount}`.
+ */
+const subsetCache = new Map<string, boolean | null>();
+
+/**
+ * Cache des résultats de compilation RegExp pour éviter les recompilations.
+ */
+const regexCache = new Map<string, RegExp | null>();
+
+/**
+ * Cache des générateurs RandExp pour éviter les re-créations.
+ */
+const generatorCache = new Map<string, RandExp | null>();
+
+/**
+ * Vide les caches internes. Utile pour les tests ou la gestion mémoire.
+ */
+export function clearPatternCaches(): void {
+	subsetCache.clear();
+	regexCache.clear();
+	generatorCache.clear();
+}
+
+// ─── Trivial pattern detection (module-level constants) ──────────────────────
+
+/**
+ * Patterns universels connus — matchent toute string (ou presque).
+ * Défini au niveau du module pour éviter de recréer le Set à chaque appel.
+ */
+const UNIVERSAL_PATTERNS: ReadonlySet<string> = new Set([
+	".*",
+	".+",
+	"^.*$",
+	"^.+$",
+	"^.*",
+	".*$",
+	"^.+",
+	".+$",
+	"(?:.*)",
+	"(?:.+)",
+]);
+
+/**
+ * Patterns anchored universal — variantes fréquentes qui matchent tout.
+ * Utilisé pour la détection rapide de superset universels.
+ */
+const _ANCHORED_UNIVERSAL_REGEX =
+	/^\^?\(?:\.\*\)?\$?$|^\^?\.\*\$?$|^\^?\.\+\$?$/;
+
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 /**
- * Crée un générateur RandExp configuré pour un pattern donné.
+ * Crée un générateur RandExp configuré pour un pattern donné (avec cache).
  *
  * @param pattern  Le pattern regex source
  * @returns        L'instance RandExp configurée, ou null si le pattern est invalide
  */
 function createGenerator(pattern: string): RandExp | null {
+	const cached = generatorCache.get(pattern);
+	if (cached !== undefined) return cached;
+
 	try {
 		const randexp = new RandExp(pattern);
 		randexp.max = MAX_REPETITION;
+		generatorCache.set(pattern, randexp);
 		return randexp;
 	} catch {
+		generatorCache.set(pattern, null);
 		return null;
 	}
 }
 
 /**
- * Compile un pattern en RegExp avec gestion d'erreur.
+ * Compile un pattern en RegExp avec gestion d'erreur et cache.
  *
  * @param pattern  Le pattern regex à compiler
  * @returns        L'objet RegExp compilé, ou null si invalide
  */
 function compileRegex(pattern: string): RegExp | null {
+	const cached = regexCache.get(pattern);
+	if (cached !== undefined) return cached;
+
 	try {
-		return new RegExp(pattern);
+		const regex = new RegExp(pattern);
+		regexCache.set(pattern, regex);
+		return regex;
 	} catch {
+		regexCache.set(pattern, null);
 		return null;
 	}
 }
 
 /**
- * Génère un ensemble diversifié de strings matchant un pattern.
- *
- * Utilise plusieurs passes avec des seeds différentes pour maximiser
- * la diversité des échantillons et réduire le risque de faux positifs.
- *
- * @param generator   Le générateur RandExp
- * @param count       Le nombre total d'échantillons à produire
- * @returns           Un Set de strings uniques générées
+ * Vérifie si un pattern est un superset universel (matche tout).
+ * Utilisé pour court-circuiter le sampling quand sup matche tout.
  */
-function generateDiverseSamples(
-	generator: RandExp,
-	count: number,
-): Set<string> {
-	const samples = new Set<string>();
-	let attempts = 0;
-	const maxAttempts = count * 3; // Éviter les boucles infinies
+function isUniversalSuperset(pattern: string): boolean {
+	const trimmed = pattern.trim();
+	if (trimmed === "" || UNIVERSAL_PATTERNS.has(trimmed)) return true;
 
-	while (samples.size < count && attempts < maxAttempts) {
-		const sample = generator.gen();
-		if (typeof sample === "string" && sample.length <= MAX_GENERATED_LENGTH) {
-			samples.add(sample);
-		}
-		attempts++;
-	}
+	// Vérifier des variantes avec anchors optionnels
+	// Ex: "^(.*)$", "^(.+)$" etc.
+	if (trimmed === "^(.*)$" || trimmed === "^(.+)$") return true;
 
-	return samples;
+	return false;
+}
+
+/**
+ * Vérifie si subPattern est un sous-string littéral de supPattern
+ * ou si le sup est clairement plus large (heuristiques rapides).
+ * Retourne true si sub ⊆ sup est garanti, false sinon.
+ */
+function quickSubsetCheck(
+	_subPattern: string,
+	supPattern: string,
+): boolean | null {
+	// Si sup est universel → tout est un sous-ensemble
+	if (isUniversalSuperset(supPattern)) return true;
+
+	// Si sub est un pattern littéral exact (anchored string sans métacaractères)
+	// et que sup contient une classe de caractères ou quantificateur qui l'englobe,
+	// on ne peut pas le déterminer facilement → null
+	return null;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -137,29 +205,74 @@ export function isPatternSubset(
 	// ── Identité : même pattern → toujours subset ──
 	if (subPattern === supPattern) return true;
 
+	// ── Cache lookup ──
+	const cacheKey = `${subPattern}\0${supPattern}\0${sampleCount}`;
+	const cached = subsetCache.get(cacheKey);
+	if (cached !== undefined) return cached;
+
+	// ── Quick checks avant le sampling ──
+	const quick = quickSubsetCheck(subPattern, supPattern);
+	if (quick !== null) {
+		subsetCache.set(cacheKey, quick);
+		return quick;
+	}
+
 	// ── Compiler le pattern sup ──
 	const supRegex = compileRegex(supPattern);
-	if (supRegex === null) return null;
+	if (supRegex === null) {
+		subsetCache.set(cacheKey, null);
+		return null;
+	}
 
 	// ── Créer le générateur pour sub ──
 	const generator = createGenerator(subPattern);
-	if (generator === null) return null;
+	if (generator === null) {
+		subsetCache.set(cacheKey, null);
+		return null;
+	}
 
-	// ── Générer les échantillons ──
-	const samples = generateDiverseSamples(generator, sampleCount);
+	// ── Générer et vérifier les échantillons paresseusement ──
+	// Au lieu de générer tous les échantillons d'abord puis les vérifier,
+	// on génère et vérifie un par un pour permettre un arrêt précoce
+	// dès qu'un contre-exemple est trouvé.
+	const seen = new Set<string>();
+	let validSamples = 0;
+	let attempts = 0;
+	const maxAttempts = sampleCount * 3; // Éviter les boucles infinies
 
-	// Si aucun échantillon n'a pu être généré → indéterminé
-	if (samples.size === 0) return null;
+	while (validSamples < sampleCount && attempts < maxAttempts) {
+		attempts++;
+		const sample = generator.gen();
 
-	// ── Vérifier chaque échantillon contre sup ──
-	for (const sample of samples) {
+		// Valider que l'échantillon est utilisable
+		if (typeof sample !== "string" || sample.length > MAX_GENERATED_LENGTH) {
+			continue;
+		}
+
+		// Dédupliquer les échantillons
+		if (seen.has(sample)) {
+			continue;
+		}
+		seen.add(sample);
+		validSamples++;
+
+		// ── Vérification immédiate contre sup ──
+		// Arrêt précoce dès qu'un contre-exemple est trouvé
 		if (!supRegex.test(sample)) {
 			// Contre-exemple trouvé → sub ⊄ sup (certain)
+			subsetCache.set(cacheKey, false);
 			return false;
 		}
 	}
 
+	// Si aucun échantillon n'a pu être généré → indéterminé
+	if (validSamples === 0) {
+		subsetCache.set(cacheKey, null);
+		return null;
+	}
+
 	// Tous les échantillons matchent → sub ⊆ sup (confiance haute)
+	subsetCache.set(cacheKey, true);
 	return true;
 }
 
@@ -210,19 +323,5 @@ export function isTrivialPattern(pattern: string): boolean {
 	const trimmed = pattern.trim();
 	if (trimmed === "") return true;
 
-	// Patterns universels courants (avec ou sans anchors)
-	const universalPatterns = new Set([
-		".*",
-		".+",
-		"^.*$",
-		"^.+$",
-		"^.*",
-		".*$",
-		"^.+",
-		".+$",
-		"(?:.*)",
-		"(?:.+)",
-	]);
-
-	return universalPatterns.has(trimmed);
+	return UNIVERSAL_PATTERNS.has(trimmed);
 }

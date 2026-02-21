@@ -36,7 +36,6 @@
 	"devDependencies": {
 		"@biomejs/biome": "2.4.3",
 		"@types/bun": "latest",
-		"@types/lodash": "4.17.23",
 		"lefthook": "^2.1.1",
 		"mitata": "^1.0.34"
 	},
@@ -46,7 +45,6 @@
 	"dependencies": {
 		"@x0k/json-schema-merge": "1.0.2",
 		"class-validator": "0.14.3",
-		"lodash": "4.17.23",
 		"randexp": "0.5.3"
 	}
 }
