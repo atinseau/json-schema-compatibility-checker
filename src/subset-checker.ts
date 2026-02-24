@@ -4,6 +4,7 @@ import { isFormatSubset } from "./format-validator";
 import type { MergeEngine } from "./merge-engine";
 import { normalize } from "./normalizer";
 import { isPatternSubset } from "./pattern-subset";
+import { computeSemanticDiffs } from "./semantic-diff";
 import type { SchemaDiff, SubsetResult } from "./types";
 import { deepEqual, hasOwn, isPlainObj, omitKeys } from "./utils";
 
@@ -790,11 +791,15 @@ export function checkBranchedSub(
 			allDiffs.push({
 				path: `${branchLabel}[${i}]`,
 				type: "changed",
-				expected: branch,
-				actual: "Branch not accepted by superset",
+				sourceValue: branch,
+				mergedValue: "Branch not accepted by superset",
 			});
 		}
 	}
+
+	const semanticDiffs = allSubset
+		? []
+		: computeSemanticDiffs(subBranches[0] ?? true, sup, allDiffs);
 
 	return {
 		isSubset: allSubset,
@@ -804,6 +809,7 @@ export function checkBranchedSub(
 				: { anyOf: subBranches }
 			: null,
 		diffs: allDiffs,
+		semanticDiffs,
 	};
 }
 
@@ -831,14 +837,14 @@ export function checkBranchedSup(
 		if (merged !== null) {
 			// Fast path: skip normalize if merged already equals sub
 			if (deepEqual(merged, sub)) {
-				return { isSubset: true, merged, diffs: [] };
+				return { isSubset: true, merged, diffs: [], semanticDiffs: [] };
 			}
 			const normalizedMerged = normalize(merged);
 			if (
 				deepEqual(normalizedMerged, sub) ||
 				engine.isEqual(normalizedMerged, sub)
 			) {
-				return { isSubset: true, merged, diffs: [] };
+				return { isSubset: true, merged, diffs: [], semanticDiffs: [] };
 			}
 		}
 	}
@@ -846,17 +852,24 @@ export function checkBranchedSup(
 	// Point 6 : message précis selon le type de branche
 	const branchLabel = branchType === "none" ? "anyOf" : branchType;
 
+	const fallbackDiffs: SchemaDiff[] = [
+		{
+			path: "$",
+			type: "changed",
+			sourceValue: sub,
+			mergedValue: `No branch in superset's ${branchLabel} accepts this schema`,
+		},
+	];
+
 	return {
 		isSubset: false,
 		merged: null,
-		diffs: [
-			{
-				path: "$",
-				type: "changed",
-				expected: sub,
-				actual: `No branch in superset's ${branchLabel} accepts this schema`,
-			},
-		],
+		diffs: fallbackDiffs,
+		semanticDiffs: computeSemanticDiffs(
+			sub,
+			branchType === "oneOf" ? { oneOf: supBranches } : { anyOf: supBranches },
+			fallbackDiffs,
+		),
 	};
 }
 
@@ -885,7 +898,7 @@ export function checkAtomic(
 
 		// Fast path: skip normalize if merged already equals sub
 		if (deepEqual(merged, sub)) {
-			return { isSubset: true, merged, diffs: [] };
+			return { isSubset: true, merged, diffs: [], semanticDiffs: [] };
 		}
 
 		const normalizedMerged = normalize(merged);
@@ -894,23 +907,31 @@ export function checkAtomic(
 			deepEqual(normalizedMerged, sub) ||
 			engine.isEqual(normalizedMerged, sub)
 		) {
-			return { isSubset: true, merged: normalizedMerged, diffs: [] };
+			return {
+				isSubset: true,
+				merged: normalizedMerged,
+				diffs: [],
+				semanticDiffs: [],
+			};
 		}
 
 		const diffs = computeDiffs(sub, normalizedMerged, "");
-		return { isSubset: false, merged: normalizedMerged, diffs };
+		const semanticDiffs = computeSemanticDiffs(sub, effectiveSup, diffs);
+		return { isSubset: false, merged: normalizedMerged, diffs, semanticDiffs };
 	} catch (e) {
+		const diffs: SchemaDiff[] = [
+			{
+				path: "$",
+				type: "changed",
+				sourceValue: sub,
+				mergedValue: `Incompatible: ${e instanceof Error ? e.message : String(e)}`,
+			},
+		];
 		return {
 			isSubset: false,
 			merged: null,
-			diffs: [
-				{
-					path: "$",
-					type: "changed",
-					expected: sub,
-					actual: `Incompatible: ${e instanceof Error ? e.message : String(e)}`,
-				},
-			],
+			diffs,
+			semanticDiffs: computeSemanticDiffs(sub, effectiveSup, diffs),
 		};
 	}
 }

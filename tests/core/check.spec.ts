@@ -58,7 +58,7 @@ describe("check", () => {
 		expect(result.merged).toBeNull();
 		expect(result.diffs.length).toBe(1);
 		expect(result.diffs[0]?.path).toBe("$");
-		expect(String(result.diffs[0]?.actual)).toContain("Incompatible");
+		expect(String(result.diffs[0]?.mergedValue)).toContain("Incompatible");
 	});
 
 	test("diff path traces through nested objects", () => {
@@ -163,7 +163,7 @@ describe("check", () => {
 		expect(result.isSubset).toBe(false);
 		const branchDiff = result.diffs.find((d) => d.path === "anyOf[2]");
 		expect(branchDiff).toBeDefined();
-		expect(String(branchDiff?.actual)).toContain("Branch not accepted");
+		expect(String(branchDiff?.mergedValue)).toContain("Branch not accepted");
 	});
 
 	test("diffs for anyOf superset with no matching branch", () => {
@@ -174,7 +174,7 @@ describe("check", () => {
 
 		expect(result.isSubset).toBe(false);
 		expect(result.diffs.length).toBe(1);
-		expect(String(result.diffs[0]?.actual)).toContain("No branch");
+		expect(String(result.diffs[0]?.mergedValue)).toContain("No branch");
 	});
 
 	test("enum diff shows changed values", () => {
@@ -239,7 +239,9 @@ describe("formatResult", () => {
 		);
 		const formatted = checker.formatResult("label", result);
 
-		expect(formatted).toContain("+ pattern");
+		// Semantic diff: pattern-not-subset
+		expect(formatted).toContain("pattern");
+		expect(formatted).toContain("pattern-not-subset");
 	});
 
 	test("formats removed diffs with - prefix", () => {
@@ -261,7 +263,9 @@ describe("formatResult", () => {
 		);
 		const formatted = checker.formatResult("label", result);
 
-		expect(formatted).toContain("- properties.age");
+		// Semantic diff: property-not-allowed for 'age'
+		expect(formatted).toContain("age");
+		expect(formatted).toContain("property-not-allowed");
 	});
 
 	test("formats changed diffs with ~ prefix and arrow", () => {
@@ -271,8 +275,9 @@ describe("formatResult", () => {
 		);
 		const formatted = checker.formatResult("label", result);
 
-		expect(formatted).toContain("~ minimum");
-		expect(formatted).toContain("→");
+		// Semantic diff: constraint-too-loose for minimum
+		expect(formatted).toContain("minimum");
+		expect(formatted).toContain("constraint-too-loose");
 	});
 
 	test("formats incompatible type error", () => {

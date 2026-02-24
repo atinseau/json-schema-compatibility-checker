@@ -30,8 +30,7 @@ const RECURSIVE_KEYS: ReadonlySet<string> = new Set([
  * Chaque propriété est un sous-schema → récursion au niveau des clés.
  *
  * `dependencies` est inclus ici avec une gestion spéciale (forme tableau
- * vs forme schema) dans
- `computePropertyDiffs`.
+ * vs forme schema) dans `computePropertyDiffs`.
  *
  * Point 3 — dependencies ajouté ici (avec gestion spéciale forme tableau).
  */
@@ -100,8 +99,8 @@ export function computeDiffs(
 				{
 					path: path || "$",
 					type: "changed",
-					expected: original,
-					actual: merged,
+					sourceValue: original,
+					mergedValue: merged,
 				},
 			];
 		}
@@ -125,8 +124,8 @@ export function computeDiffs(
 			result.push({
 				path: currentPath,
 				type: "added",
-				expected: undefined,
-				actual: mergedVal,
+				sourceValue: undefined,
+				mergedValue: mergedVal,
 			});
 			continue;
 		}
@@ -136,8 +135,8 @@ export function computeDiffs(
 			result.push({
 				path: currentPath,
 				type: "removed",
-				expected: origVal,
-				actual: undefined,
+				sourceValue: origVal,
+				mergedValue: undefined,
 			});
 			continue;
 		}
@@ -176,8 +175,8 @@ export function computeDiffs(
 			result.push({
 				path: currentPath,
 				type: "changed",
-				expected: origVal,
-				actual: mergedVal,
+				sourceValue: origVal,
+				mergedValue: mergedVal,
 			});
 		}
 	}
@@ -215,8 +214,8 @@ function computePropertyDiffs(
 			result.push({
 				path: currentPath,
 				type: "added",
-				expected: undefined,
-				actual: mergedVal,
+				sourceValue: undefined,
+				mergedValue: mergedVal,
 			});
 			continue;
 		}
@@ -225,8 +224,8 @@ function computePropertyDiffs(
 			result.push({
 				path: currentPath,
 				type: "removed",
-				expected: origVal,
-				actual: undefined,
+				sourceValue: origVal,
+				mergedValue: undefined,
 			});
 			continue;
 		}
@@ -243,8 +242,8 @@ function computePropertyDiffs(
 					result.push({
 						path: currentPath,
 						type: "changed",
-						expected: origVal,
-						actual: mergedVal,
+						sourceValue: origVal,
+						mergedValue: mergedVal,
 					});
 				}
 				continue;

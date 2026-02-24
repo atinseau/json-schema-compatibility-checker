@@ -1,4 +1,5 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
+import type { SemanticDiff } from "./semantic-diff/types";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -7,10 +8,10 @@ export interface SchemaDiff {
 	path: string;
 	/** Type de divergence */
 	type: "added" | "removed" | "changed";
-	/** Valeur dans le schema original (sub) */
-	expected: unknown;
+	/** Valeur dans le schema original (sub / source) */
+	sourceValue: unknown;
 	/** Valeur dans le schema mergé (intersection) */
-	actual: unknown;
+	mergedValue: unknown;
 }
 
 export interface SubsetResult {
@@ -20,6 +21,8 @@ export interface SubsetResult {
 	merged: JSONSchema7Definition | null;
 	/** Différences structurelles détectées entre sub et l'intersection */
 	diffs: SchemaDiff[];
+	/** Diagnostics sémantiques lisibles décrivant POURQUOI les schemas sont incompatibles */
+	semanticDiffs: SemanticDiff[];
 }
 
 export interface ConnectionResult extends SubsetResult {

@@ -129,13 +129,13 @@ export class JsonSchemaCompatibilityChecker {
 		// ── Identity short-circuit ──
 		// Same reference → no diffs, no merge needed.
 		if (sub === sup) {
-			return { isSubset: true, merged: sub, diffs: [] };
+			return { isSubset: true, merged: sub, diffs: [], semanticDiffs: [] };
 		}
 
 		// ── Pre-normalize structural equality ──
 		// Avoids WeakMap overhead for identical schemas ({} ⊆ {}, etc.).
 		if (deepEqual(sub, sup)) {
-			return { isSubset: true, merged: sub, diffs: [] };
+			return { isSubset: true, merged: sub, diffs: [], semanticDiffs: [] };
 		}
 
 		const nSub = normalize(sub);
@@ -144,7 +144,7 @@ export class JsonSchemaCompatibilityChecker {
 		// ── Post-normalize structural identity ──
 		// Catches semantically equivalent schemas after normalization.
 		if (deepEqual(nSub, nSup)) {
-			return { isSubset: true, merged: nSub, diffs: [] };
+			return { isSubset: true, merged: nSub, diffs: [], semanticDiffs: [] };
 		}
 
 		const { branches: subBranches, type: subBranchType } =

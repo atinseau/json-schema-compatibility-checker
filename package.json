@@ -1,50 +1,50 @@
 {
-  "name": "json-schema-compatibility-checker",
-  "version": "1.0.1",
-  "license": "MIT",
-  "description": "A tool to check compatibility between two JSON Schemas.",
-  "author": {
-    "email": "arthurtinseau@live.fr",
-    "url": "https://github.com/atinseau/json-schema-compatibility-checker",
-    "name": "atinseau"
-  },
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "type": "module",
-  "sideEffects": false,
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "scripts": {
-    "prepare": "lefthook install",
-    "build:bun": "bun build src/*.ts --outdir ./dist --production --minify --root src --sourcemap --splitting --target node --format esm --packages external --chunk-naming='chunk-[hash].js'",
-    "build:tsc": "tsc --project tsconfig.build.json",
-    "build": "bun --parallel build:bun build:tsc",
-    "prepublishOnly": "bun run build",
-    "check-types": "tsc --noEmit",
-    "check": "biome check --write --unsafe",
-    "test": "bun test",
-    "bench": "bun run benchmarks/run.ts"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "2.4.3",
-    "@types/bun": "latest",
-    "lefthook": "^2.1.1",
-    "mitata": "^1.0.34"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
-  "dependencies": {
-    "@x0k/json-schema-merge": "1.0.2",
-    "class-validator": "0.14.3",
-    "randexp": "0.5.3"
-  }
+	"name": "json-schema-compatibility-checker",
+	"version": "1.0.1",
+	"license": "MIT",
+	"description": "A tool to check compatibility between two JSON Schemas.",
+	"author": {
+		"email": "arthurtinseau@live.fr",
+		"url": "https://github.com/atinseau/json-schema-compatibility-checker",
+		"name": "atinseau"
+	},
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"type": "module",
+	"sideEffects": false,
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"prepare": "lefthook install",
+		"build:bun": "bun build src/*.ts --outdir ./dist --production --minify --root src --sourcemap --splitting --target node --format esm --packages external --chunk-naming='chunk-[hash].js'",
+		"build:tsc": "tsc --project tsconfig.build.json",
+		"build": "bun --parallel build:bun build:tsc",
+		"prepublishOnly": "bun run build",
+		"check-types": "tsc --noEmit",
+		"check": "biome check --write --unsafe",
+		"test": "bun test",
+		"bench": "bun run benchmarks/run.ts"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.4.3",
+		"@types/bun": "latest",
+		"lefthook": "2.1.1",
+		"mitata": "1.0.34"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	},
+	"dependencies": {
+		"@x0k/json-schema-merge": "1.0.2",
+		"class-validator": "0.14.3",
+		"randexp": "0.5.3"
+	}
 }
