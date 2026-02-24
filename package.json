@@ -1,6 +1,6 @@
 {
 	"name": "json-schema-compatibility-checker",
-	"version": "1.0.2",
+	"version": "1.0.4",
 	"license": "MIT",
 	"description": "A tool to check compatibility between two JSON Schemas.",
 	"author": {
