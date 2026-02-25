@@ -74,7 +74,7 @@ describe("canConnect", () => {
 
 		expect(result.isSubset).toBe(true);
 		expect(result.direction).toBe("sourceOutput ⊆ targetInput");
-		expect(result.diffs).toEqual([]);
+		expect(result.errors).toEqual([]);
 	});
 
 	test("incompatible input → output returns isSubset false with diffs", () => {
@@ -82,7 +82,7 @@ describe("canConnect", () => {
 
 		expect(result.isSubset).toBe(false);
 		expect(result.direction).toBe("sourceOutput ⊆ targetInput");
-		expect(result.diffs.length).toBeGreaterThan(0);
+		expect(result.errors.length).toBeGreaterThan(0);
 	});
 
 	test("identical schemas are always connectable", () => {

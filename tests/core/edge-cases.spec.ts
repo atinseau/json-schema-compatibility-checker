@@ -210,7 +210,7 @@ describe("edge cases", () => {
 
 		expect(result).toHaveProperty("isSubset");
 		expect(result).toHaveProperty("merged");
-		expect(result).toHaveProperty("diffs");
+		expect(result).toHaveProperty("errors");
 		expect(result).toHaveProperty("direction");
 		expect(typeof result.direction).toBe("string");
 	});

@@ -2,15 +2,13 @@ import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
-export interface SchemaDiff {
-	/** Chemin JSON-path-like vers la divergence (ex: "properties.user.required") */
-	path: string;
-	/** Type de divergence */
-	type: "added" | "removed" | "changed";
-	/** Valeur dans le schema original (sub) */
-	expected: unknown;
-	/** Valeur dans le schema mergé (intersection) */
-	actual: unknown;
+export interface SchemaError {
+	/** Chemin normalisé vers la propriété concernée (ex: "user.name", "users[].name", "accountId") */
+	key: string;
+	/** Type ou valeur attendu(e) par le schema cible (sup) */
+	expected: string;
+	/** Type ou valeur reçu(e) depuis le schema source (sub) */
+	received: string;
 }
 
 export interface SubsetResult {
@@ -18,8 +16,8 @@ export interface SubsetResult {
 	isSubset: boolean;
 	/** Le schema résultant de l'intersection allOf(sub, sup), ou null si incompatible */
 	merged: JSONSchema7Definition | null;
-	/** Différences structurelles détectées entre sub et l'intersection */
-	diffs: SchemaDiff[];
+	/** Erreurs sémantiques décrivant les incompatibilités entre les deux schemas */
+	errors: SchemaError[];
 }
 
 export interface ConnectionResult extends SubsetResult {

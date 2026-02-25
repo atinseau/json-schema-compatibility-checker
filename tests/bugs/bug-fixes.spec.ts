@@ -226,6 +226,6 @@ describe("Point 9 — deep comparison replaces JSON.stringify", () => {
 		};
 		const result = checker.check(schema, schema);
 		expect(result.isSubset).toBe(true);
-		expect(result.diffs).toHaveLength(0);
+		expect(result.errors).toHaveLength(0);
 	});
 });

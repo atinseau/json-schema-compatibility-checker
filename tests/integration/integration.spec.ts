@@ -257,7 +257,7 @@ describe("complex real-world schemas — orchestration use cases", () => {
 
 		const result = checker.canConnect(webhookPayload, strictEventSchema);
 		expect(result.isSubset).toBe(false);
-		expect(result.diffs.length).toBeGreaterThan(0);
+		expect(result.errors.length).toBeGreaterThan(0);
 	});
 
 	test("discriminated union output ⊆ flexible input", () => {
@@ -390,11 +390,11 @@ describe("diff reporting — diagnostic quality", () => {
 		const result = checker.check(sub, sup);
 		expect(result.isSubset).toBe(false);
 
-		// The diff path should trace through the nesting
-		const deepDiff = result.diffs.find(
-			(d) => d.path.includes("level1") && d.path.includes("level2"),
+		// The error key should trace through the nesting
+		const deepError = result.errors.find(
+			(e) => e.key.includes("level1") && e.key.includes("level2"),
 		);
-		expect(deepDiff).toBeDefined();
+		expect(deepError).toBeDefined();
 	});
 
 	test("multiple diffs are all reported", () => {
@@ -418,8 +418,8 @@ describe("diff reporting — diagnostic quality", () => {
 
 		const result = checker.check(sub, sup);
 		expect(result.isSubset).toBe(false);
-		// Multiple diffs: minLength, minimum, required, email property
-		expect(result.diffs.length).toBeGreaterThanOrEqual(1);
+		// Multiple errors: minLength, minimum, required, email property
+		expect(result.errors.length).toBeGreaterThanOrEqual(1);
 	});
 
 	test("formatResult produces readable output", () => {

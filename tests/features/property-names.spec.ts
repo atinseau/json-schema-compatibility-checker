@@ -318,10 +318,10 @@ describe("propertyNames — behavior exploration", () => {
 		});
 	});
 
-	// ── check (with diffs) ─────────────────────────────────────────────────
+	// ── check (with errors) ────────────────────────────────────────────────
 
-	describe("check (diffs)", () => {
-		test("diff path traces through propertyNames when constraint is added", () => {
+	describe("check (errors)", () => {
+		test("error reports propertyNames constraint when added", () => {
 			const sub: JSONSchema7 = {
 				type: "object",
 			};
@@ -331,13 +331,17 @@ describe("propertyNames — behavior exploration", () => {
 			};
 			const result = checker.check(sub, sup);
 			expect(result.isSubset).toBe(false);
-			expect(result.diffs.length).toBeGreaterThan(0);
-			// Should have a diff mentioning propertyNames
-			const pnDiff = result.diffs.find((d) => d.path.includes("propertyNames"));
-			expect(pnDiff).toBeDefined();
+			expect(result.errors.length).toBeGreaterThan(0);
+			// Should have an error mentioning propertyNames
+			const pnError = result.errors.find(
+				(e) =>
+					e.key.includes("propertyNames") ||
+					e.expected.includes("propertyNames"),
+			);
+			expect(pnError).toBeDefined();
 		});
 
-		test("diff path traces through propertyNames.minLength when it changes", () => {
+		test("error reports propertyNames.minLength when it changes", () => {
 			const sub: JSONSchema7 = {
 				type: "object",
 				propertyNames: { minLength: 1 },
@@ -348,19 +352,22 @@ describe("propertyNames — behavior exploration", () => {
 			};
 			const result = checker.check(sub, sup);
 			expect(result.isSubset).toBe(false);
-			expect(result.diffs.length).toBeGreaterThan(0);
-			const diff = result.diffs.find((d) => d.path.includes("propertyNames"));
-			expect(diff).toBeDefined();
+			expect(result.errors.length).toBeGreaterThan(0);
+			const error = result.errors.find(
+				(e) =>
+					e.key.includes("propertyNames") || e.expected.includes("minLength"),
+			);
+			expect(error).toBeDefined();
 		});
 
-		test("no diff when propertyNames are identical", () => {
+		test("no errors when propertyNames are identical", () => {
 			const schema: JSONSchema7 = {
 				type: "object",
 				propertyNames: { pattern: "^[a-z]+$" },
 			};
 			const result = checker.check(schema, schema);
 			expect(result.isSubset).toBe(true);
-			expect(result.diffs).toHaveLength(0);
+			expect(result.errors).toHaveLength(0);
 		});
 	});
 
@@ -637,7 +644,7 @@ describe("propertyNames — behavior exploration", () => {
 			expect(checker.isSubset(sub, sup)).toBe(false);
 		});
 
-		test("diff on nested propertyNames includes correct path", () => {
+		test("error on nested propertyNames includes correct path", () => {
 			const sub: JSONSchema7 = {
 				type: "object",
 				properties: {
@@ -657,10 +664,13 @@ describe("propertyNames — behavior exploration", () => {
 			};
 			const result = checker.check(sub, sup);
 			expect(result.isSubset).toBe(false);
-			const diff = result.diffs.find(
-				(d) => d.path.includes("config") && d.path.includes("propertyNames"),
+			const error = result.errors.find(
+				(e) =>
+					e.key.includes("config") &&
+					(e.key.includes("propertyNames") ||
+						e.expected.includes("propertyNames")),
 			);
-			expect(diff).toBeDefined();
+			expect(error).toBeDefined();
 		});
 	});
 

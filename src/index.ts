@@ -5,9 +5,10 @@ export {
 	isPatternSubset,
 	isTrivialPattern,
 } from "./pattern-subset";
+export { formatSchemaType } from "./semantic-errors";
 export type {
 	ConnectionResult,
 	ResolvedConditionResult,
-	SchemaDiff,
+	SchemaError,
 	SubsetResult,
 } from "./types";

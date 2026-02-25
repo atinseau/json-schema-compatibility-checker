@@ -87,7 +87,7 @@ describe("if/then/else — structural limitations", () => {
 		expect(checker.isSubset(subFixed, conditionalSchema)).toBe(false);
 
 		const result = checker.check(subFixed, conditionalSchema);
-		expect(result.diffs.some((d) => d.path === "if")).toBe(true);
+		expect(result.errors.length).toBeGreaterThan(0);
 	});
 
 	test("both schemas with same conditions (fixed by identity short-circuit)", () => {
@@ -95,7 +95,7 @@ describe("if/then/else — structural limitations", () => {
 		// Previously failed because merge produces allOf residual.
 		// Now fixed: identity short-circuit detects same reference → true.
 		expect(result.isSubset).toBe(true);
-		expect(result.diffs).toHaveLength(0);
+		expect(result.errors).toHaveLength(0);
 	});
 
 	test("both schemas with different conditions produce false", () => {

@@ -43,24 +43,22 @@ describe("Pattern intersection — behavior and limitations", () => {
 			expect(checker.isSubset(sub, sup)).toBe(false);
 		});
 
-		test("sub has pattern + sup has no pattern → check returns no diffs", () => {
+		test("sub has pattern + sup has no pattern → check returns no errors", () => {
 			const result = checker.check(
 				{ type: "string", pattern: "^[A-Z]{3}$" },
 				{ type: "string" },
 			);
 			expect(result.isSubset).toBe(true);
-			expect(result.diffs).toHaveLength(0);
+			expect(result.errors).toHaveLength(0);
 		});
 
-		test("sub has no pattern + sup has pattern → check returns diff with path 'pattern'", () => {
+		test("sub has no pattern + sup has pattern → check returns errors", () => {
 			const result = checker.check(
 				{ type: "string" },
 				{ type: "string", pattern: "^[A-Z]+$" },
 			);
 			expect(result.isSubset).toBe(false);
-			const patternDiff = result.diffs.find((d) => d.path === "pattern");
-			expect(patternDiff).toBeDefined();
-			expect(patternDiff?.type).toBe("added");
+			expect(result.errors.length).toBeGreaterThan(0);
 		});
 	});
 
@@ -156,7 +154,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 			expect(result).toBe(true); // FIXED — sampling confirms inclusion
 		});
 
-		test("check() on fixed pattern inclusion: no diffs (pattern stripped before merge)", () => {
+		test("check() on fixed pattern inclusion: no errors (pattern stripped before merge)", () => {
 			const result = checker.check(
 				{ type: "string", pattern: "^[a-z]{3}$" },
 				{ type: "string", pattern: "^[a-z]+$" },
@@ -164,7 +162,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 			// Maintenant que le pattern de sup est retiré avant le merge,
 			// le merge produit un résultat structurellement identique à sub → isSubset true.
 			expect(result.isSubset).toBe(true);
-			expect(result.diffs).toHaveLength(0);
+			expect(result.errors).toHaveLength(0);
 		});
 	});
 
