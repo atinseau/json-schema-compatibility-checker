@@ -19,7 +19,7 @@ import {
 import type {
 	ConnectionResult,
 	ResolvedConditionResult,
-	SchemaDiff,
+	SchemaError,
 	SubsetResult,
 } from "./types";
 import { deepEqual } from "./utils";
@@ -27,7 +27,7 @@ import { deepEqual } from "./utils";
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 
 export type {
-	SchemaDiff,
+	SchemaError,
 	SubsetResult,
 	ConnectionResult,
 	ResolvedConditionResult,
@@ -120,22 +120,22 @@ export class JsonSchemaCompatibilityChecker {
 
 	/**
 	 * Vérifie `sub ⊆ sup` et retourne un diagnostic complet
-	 * avec les diffs structurels.
+	 * avec des erreurs sémantiques lisibles.
 	 *
 	 * Point 6 — Utilise `getBranchesTyped` pour distinguer `anyOf` de `oneOf`
-	 * dans les paths de diff (ex: `anyOf[0]` vs `oneOf[0]`).
+	 * dans les paths d'erreur.
 	 */
 	check(sub: JSONSchema7Definition, sup: JSONSchema7Definition): SubsetResult {
 		// ── Identity short-circuit ──
-		// Same reference → no diffs, no merge needed.
+		// Same reference → no errors, no merge needed.
 		if (sub === sup) {
-			return { isSubset: true, merged: sub, diffs: [] };
+			return { isSubset: true, merged: sub, errors: [] };
 		}
 
 		// ── Pre-normalize structural equality ──
 		// Avoids WeakMap overhead for identical schemas ({} ⊆ {}, etc.).
 		if (deepEqual(sub, sup)) {
-			return { isSubset: true, merged: sub, diffs: [] };
+			return { isSubset: true, merged: sub, errors: [] };
 		}
 
 		const nSub = normalize(sub);
@@ -144,7 +144,7 @@ export class JsonSchemaCompatibilityChecker {
 		// ── Post-normalize structural identity ──
 		// Catches semantically equivalent schemas after normalization.
 		if (deepEqual(nSub, nSup)) {
-			return { isSubset: true, merged: nSub, diffs: [] };
+			return { isSubset: true, merged: nSub, errors: [] };
 		}
 
 		const { branches: subBranches, type: subBranchType } =

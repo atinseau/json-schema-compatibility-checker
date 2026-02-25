@@ -5,25 +5,17 @@ import type { SubsetResult } from "./types";
 // Formate un `SubsetResult` en chaîne lisible pour logs / debug.
 
 /**
- * Formate un diff individuel en ligne lisible avec préfixe iconique.
+ * Formate une erreur sémantique en ligne lisible.
  *
- * @param d  Le diff à formater
- * @returns  Ligne formatée avec +, - ou ~ selon le type
+ * @param e  L'erreur à formater
+ * @returns  Ligne formatée avec le chemin, expected et received
  */
-function formatDiffLine(d: {
-	type: string;
-	path: string;
-	expected: unknown;
-	actual: unknown;
+function formatErrorLine(e: {
+	key: string;
+	expected: string;
+	received: string;
 }): string {
-	switch (d.type) {
-		case "added":
-			return `  + ${d.path}: ${JSON.stringify(d.actual)}`;
-		case "removed":
-			return `  - ${d.path}: was ${JSON.stringify(d.expected)}`;
-		default:
-			return `  ~ ${d.path}: ${JSON.stringify(d.expected)} → ${JSON.stringify(d.actual)}`;
-	}
+	return `  ✗ ${e.key}: expected ${e.expected}, received ${e.received}`;
 }
 
 /**
@@ -31,7 +23,7 @@ function formatDiffLine(d: {
  *
  * @param label   Label descriptif du check (ex: "strict ⊆ loose")
  * @param result  Le résultat du check à formater
- * @returns       Chaîne multi-lignes formatée avec icônes et diffs
+ * @returns       Chaîne multi-lignes formatée avec icônes et erreurs
  *
  * @example
  * ```
@@ -41,20 +33,20 @@ function formatDiffLine(d: {
  * @example
  * ```
  * ❌ loose ⊆ strict: false
- *    Diffs:
- *      ~ required: ["name"] → ["name","age"]
- *      + properties.age: {"type":"number"}
+ *    Errors:
+ *      ✗ accountId: expected string, received undefined
+ *      ✗ meetingId: expected not optional, received optional
  * ```
  */
 export function formatResult(label: string, result: SubsetResult): string {
 	const icon = result.isSubset ? "✅" : "❌";
 	const lines: string[] = [`${icon} ${label}: ${result.isSubset}`];
 
-	if (!result.isSubset && result.diffs.length > 0) {
-		lines.push("   Diffs:");
+	if (!result.isSubset && result.errors.length > 0) {
+		lines.push("   Errors:");
 
-		for (const d of result.diffs) {
-			lines.push(`     ${formatDiffLine(d)}`);
+		for (const e of result.errors) {
+			lines.push(`     ${formatErrorLine(e)}`);
 		}
 	}
 

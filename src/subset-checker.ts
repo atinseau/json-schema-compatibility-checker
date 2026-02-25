@@ -1,10 +1,10 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import { computeDiffs } from "./differ";
 import { isFormatSubset } from "./format-validator";
 import type { MergeEngine } from "./merge-engine";
 import { normalize } from "./normalizer";
 import { isPatternSubset } from "./pattern-subset";
-import type { SchemaDiff, SubsetResult } from "./types";
+import { computeSemanticErrors } from "./semantic-errors";
+import type { SchemaError, SubsetResult } from "./types";
 import { deepEqual, hasOwn, isPlainObj, omitKeys } from "./utils";
 
 // ─── Subset Checker ──────────────────────────────────────────────────────────
@@ -776,23 +776,16 @@ export function checkBranchedSub(
 	engine: MergeEngine,
 	branchType: BranchType = "anyOf",
 ): SubsetResult {
-	const allDiffs: SchemaDiff[] = [];
+	const allErrors: SchemaError[] = [];
 	let allSubset = true;
-
-	// Point 6 : utilise le type de branche réel pour le path
-	const branchLabel = branchType === "none" ? "anyOf" : branchType;
 
 	for (let i = 0; i < subBranches.length; i++) {
 		const branch = subBranches[i];
 		if (branch === undefined) continue;
 		if (!isAtomicSubsetOf(branch, sup, engine)) {
 			allSubset = false;
-			allDiffs.push({
-				path: `${branchLabel}[${i}]`,
-				type: "changed",
-				expected: branch,
-				actual: "Branch not accepted by superset",
-			});
+			const branchErrors = computeSemanticErrors(branch, sup, "");
+			allErrors.push(...branchErrors);
 		}
 	}
 
@@ -803,7 +796,7 @@ export function checkBranchedSub(
 				? { oneOf: subBranches }
 				: { anyOf: subBranches }
 			: null,
-		diffs: allDiffs,
+		errors: allErrors,
 	};
 }
 
@@ -819,7 +812,7 @@ export function checkBranchedSup(
 	sub: JSONSchema7Definition,
 	supBranches: JSONSchema7Definition[],
 	engine: MergeEngine,
-	branchType: BranchType = "anyOf",
+	_branchType: BranchType = "anyOf",
 ): SubsetResult {
 	for (const branch of supBranches) {
 		// Strip patterns confirmés par échantillonnage avant le merge
@@ -831,32 +824,29 @@ export function checkBranchedSup(
 		if (merged !== null) {
 			// Fast path: skip normalize if merged already equals sub
 			if (deepEqual(merged, sub)) {
-				return { isSubset: true, merged, diffs: [] };
+				return { isSubset: true, merged, errors: [] };
 			}
 			const normalizedMerged = normalize(merged);
 			if (
 				deepEqual(normalizedMerged, sub) ||
 				engine.isEqual(normalizedMerged, sub)
 			) {
-				return { isSubset: true, merged, diffs: [] };
+				return { isSubset: true, merged, errors: [] };
 			}
 		}
 	}
 
-	// Point 6 : message précis selon le type de branche
-	const branchLabel = branchType === "none" ? "anyOf" : branchType;
+	// Générer des erreurs sémantiques en comparant sub avec le sup original
+	const semanticErrors = computeSemanticErrors(
+		sub,
+		{ anyOf: supBranches } as JSONSchema7,
+		"",
+	);
 
 	return {
 		isSubset: false,
 		merged: null,
-		diffs: [
-			{
-				path: "$",
-				type: "changed",
-				expected: sub,
-				actual: `No branch in superset's ${branchLabel} accepts this schema`,
-			},
-		],
+		errors: semanticErrors,
 	};
 }
 
@@ -885,7 +875,7 @@ export function checkAtomic(
 
 		// Fast path: skip normalize if merged already equals sub
 		if (deepEqual(merged, sub)) {
-			return { isSubset: true, merged, diffs: [] };
+			return { isSubset: true, merged, errors: [] };
 		}
 
 		const normalizedMerged = normalize(merged);
@@ -894,23 +884,17 @@ export function checkAtomic(
 			deepEqual(normalizedMerged, sub) ||
 			engine.isEqual(normalizedMerged, sub)
 		) {
-			return { isSubset: true, merged: normalizedMerged, diffs: [] };
+			return { isSubset: true, merged: normalizedMerged, errors: [] };
 		}
 
-		const diffs = computeDiffs(sub, normalizedMerged, "");
-		return { isSubset: false, merged: normalizedMerged, diffs };
-	} catch (e) {
+		const errors = computeSemanticErrors(sub, sup, "");
+		return { isSubset: false, merged: normalizedMerged, errors };
+	} catch (_e) {
+		const errors = computeSemanticErrors(sub, sup, "");
 		return {
 			isSubset: false,
 			merged: null,
-			diffs: [
-				{
-					path: "$",
-					type: "changed",
-					expected: sub,
-					actual: `Incompatible: ${e instanceof Error ? e.message : String(e)}`,
-				},
-			],
+			errors,
 		};
 	}
 }

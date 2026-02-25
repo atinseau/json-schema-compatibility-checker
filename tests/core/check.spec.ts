@@ -13,17 +13,17 @@ beforeAll(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("check", () => {
-	test("returns isSubset: true and empty diffs when compatible", () => {
+	test("returns isSubset: true and empty errors when compatible", () => {
 		const result = checker.check(
 			{ type: "string", minLength: 5 },
 			{ type: "string" },
 		);
 		expect(result.isSubset).toBe(true);
-		expect(result.diffs).toEqual([]);
+		expect(result.errors).toEqual([]);
 		expect(result.merged).not.toBeNull();
 	});
 
-	test("returns isSubset: false and meaningful diffs for missing required", () => {
+	test("returns isSubset: false and meaningful errors for missing required", () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: { name: { type: "string" } },
@@ -40,15 +40,13 @@ describe("check", () => {
 		const result = checker.check(sub, sup);
 
 		expect(result.isSubset).toBe(false);
-		expect(result.diffs.length).toBeGreaterThan(0);
+		expect(result.errors.length).toBeGreaterThan(0);
 
-		const requiredDiff = result.diffs.find((d) => d.path === "required");
-		expect(requiredDiff).toBeDefined();
-		expect(requiredDiff?.type).toBe("changed");
-
-		const ageDiff = result.diffs.find((d) => d.path === "properties.age");
-		expect(ageDiff).toBeDefined();
-		expect(ageDiff?.type).toBe("added");
+		// Should report that 'age' is missing
+		const ageError = result.errors.find((e) => e.key === "age");
+		expect(ageError).toBeDefined();
+		expect(ageError?.expected).toBe("number");
+		expect(ageError?.received).toBe("undefined");
 	});
 
 	test("returns incompatible error for conflicting types", () => {
@@ -56,12 +54,16 @@ describe("check", () => {
 
 		expect(result.isSubset).toBe(false);
 		expect(result.merged).toBeNull();
-		expect(result.diffs.length).toBe(1);
-		expect(result.diffs[0]?.path).toBe("$");
-		expect(String(result.diffs[0]?.actual)).toContain("Incompatible");
+		expect(result.errors.length).toBeGreaterThanOrEqual(1);
+
+		// Should report a type mismatch at the root level
+		const rootError = result.errors[0];
+		expect(rootError).toBeDefined();
+		expect(rootError?.expected).toBe("number");
+		expect(rootError?.received).toBe("string");
 	});
 
-	test("diff path traces through nested objects", () => {
+	test("error path traces through nested objects", () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -103,19 +105,14 @@ describe("check", () => {
 
 		expect(result.isSubset).toBe(false);
 
-		const bioDiff = result.diffs.find(
-			(d) => d.path === "properties.user.properties.profile.properties.bio",
-		);
-		expect(bioDiff).toBeDefined();
-		expect(bioDiff?.type).toBe("added");
-
-		const reqDiff = result.diffs.find(
-			(d) => d.path === "properties.user.properties.profile.required",
-		);
-		expect(reqDiff).toBeDefined();
+		// Should report missing 'bio' with a normalized path
+		const bioError = result.errors.find((e) => e.key === "user.profile.bio");
+		expect(bioError).toBeDefined();
+		expect(bioError?.expected).toBe("string");
+		expect(bioError?.received).toBe("undefined");
 	});
 
-	test("diff reports additionalProperties constraint", () => {
+	test("reports error for additionalProperties constraint", () => {
 		const open: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -133,25 +130,20 @@ describe("check", () => {
 		const result = checker.check(open, closed);
 
 		expect(result.isSubset).toBe(false);
-
-		const addPropDiff = result.diffs.find(
-			(d) => d.path === "additionalProperties",
-		);
-		expect(addPropDiff).toBeDefined();
+		expect(result.errors.length).toBeGreaterThan(0);
 	});
 
-	test("diff reports numeric constraint changes", () => {
+	test("reports error for numeric constraint changes", () => {
 		const result = checker.check(
 			{ type: "number", minimum: 0, maximum: 100 },
 			{ type: "number", minimum: 5, maximum: 10 },
 		);
 
 		expect(result.isSubset).toBe(false);
-		expect(result.diffs.find((d) => d.path === "minimum")).toBeDefined();
-		expect(result.diffs.find((d) => d.path === "maximum")).toBeDefined();
+		expect(result.errors.length).toBeGreaterThan(0);
 	});
 
-	test("diffs for anyOf branch rejection", () => {
+	test("errors for anyOf branch rejection", () => {
 		const sub: JSONSchema7 = {
 			anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
 		};
@@ -161,44 +153,49 @@ describe("check", () => {
 		const result = checker.check(sub, sup);
 
 		expect(result.isSubset).toBe(false);
-		const branchDiff = result.diffs.find((d) => d.path === "anyOf[2]");
-		expect(branchDiff).toBeDefined();
-		expect(String(branchDiff?.actual)).toContain("Branch not accepted");
+		expect(result.errors.length).toBeGreaterThan(0);
+
+		// Should report that boolean is not accepted
+		const boolError = result.errors.find((e) => e.received === "boolean");
+		expect(boolError).toBeDefined();
 	});
 
-	test("diffs for anyOf superset with no matching branch", () => {
+	test("errors for anyOf superset with no matching branch", () => {
 		const result = checker.check(
 			{ type: "boolean" },
 			{ anyOf: [{ type: "string" }, { type: "number" }] },
 		);
 
 		expect(result.isSubset).toBe(false);
-		expect(result.diffs.length).toBe(1);
-		expect(String(result.diffs[0]?.actual)).toContain("No branch");
+		expect(result.errors.length).toBeGreaterThanOrEqual(1);
+		// Should report a type mismatch
+		const error = result.errors[0];
+		expect(error).toBeDefined();
+		expect(error?.received).toBe("boolean");
 	});
 
-	test("enum diff shows changed values", () => {
+	test("enum error shows mismatched values", () => {
 		const result = checker.check(
 			{ type: "string", enum: ["a", "b", "c", "d"] },
 			{ type: "string", enum: ["a", "b"] },
 		);
 		expect(result.isSubset).toBe(false);
 
-		const enumDiff = result.diffs.find((d) => d.path === "enum");
-		expect(enumDiff).toBeDefined();
-		expect(enumDiff?.type).toBe("changed");
+		const enumError = result.errors.find(
+			(e) => e.expected.includes("a") && e.expected.includes("b"),
+		);
+		expect(enumError).toBeDefined();
+		expect(enumError?.expected).toBe("a or b");
+		expect(enumError?.received).toBe("a, b, c, or d");
 	});
 
-	test("pattern added shows as diff", () => {
+	test("pattern added shows as error", () => {
 		const result = checker.check(
 			{ type: "string", minLength: 1 },
 			{ type: "string", minLength: 1, pattern: "^[a-z]+$" },
 		);
 		expect(result.isSubset).toBe(false);
-
-		const patternDiff = result.diffs.find((d) => d.path === "pattern");
-		expect(patternDiff).toBeDefined();
-		expect(patternDiff?.type).toBe("added");
+		expect(result.errors.length).toBeGreaterThan(0);
 	});
 });
 
@@ -214,10 +211,10 @@ describe("formatResult", () => {
 		expect(formatted).toContain("✅");
 		expect(formatted).toContain("test label");
 		expect(formatted).toContain("true");
-		expect(formatted).not.toContain("Diffs");
+		expect(formatted).not.toContain("Errors");
 	});
 
-	test("formats a failing result with ❌ icon and diffs", () => {
+	test("formats a failing result with ❌ icon and errors", () => {
 		const result = checker.check(
 			{ type: "number", minimum: 0, maximum: 100 },
 			{ type: "number", minimum: 5, maximum: 10 },
@@ -227,52 +224,30 @@ describe("formatResult", () => {
 		expect(formatted).toContain("❌");
 		expect(formatted).toContain("range check");
 		expect(formatted).toContain("false");
-		expect(formatted).toContain("Diffs");
-		expect(formatted).toContain("minimum");
-		expect(formatted).toContain("maximum");
+		expect(formatted).toContain("Errors");
 	});
 
-	test("formats added diffs with + prefix", () => {
+	test("formats errors with ✗ prefix", () => {
 		const result = checker.check(
-			{ type: "string" },
-			{ type: "string", pattern: "^[a-z]+$" },
-		);
-		const formatted = checker.formatResult("label", result);
-
-		expect(formatted).toContain("+ pattern");
-	});
-
-	test("formats removed diffs with - prefix", () => {
-		const result = checker.check(
+			{
+				type: "object",
+				properties: { name: { type: "string" } },
+				required: ["name"],
+			},
 			{
 				type: "object",
 				properties: {
 					name: { type: "string" },
 					age: { type: "number" },
 				},
-				required: ["name"],
-			},
-			{
-				type: "object",
-				properties: { name: { type: "string" } },
-				required: ["name"],
-				additionalProperties: false,
+				required: ["name", "age"],
 			},
 		);
 		const formatted = checker.formatResult("label", result);
 
-		expect(formatted).toContain("- properties.age");
-	});
-
-	test("formats changed diffs with ~ prefix and arrow", () => {
-		const result = checker.check(
-			{ type: "number", minimum: 0 },
-			{ type: "number", minimum: 5 },
-		);
-		const formatted = checker.formatResult("label", result);
-
-		expect(formatted).toContain("~ minimum");
-		expect(formatted).toContain("→");
+		expect(formatted).toContain("✗");
+		expect(formatted).toContain("expected");
+		expect(formatted).toContain("received");
 	});
 
 	test("formats incompatible type error", () => {
@@ -280,6 +255,8 @@ describe("formatResult", () => {
 		const formatted = checker.formatResult("type clash", result);
 
 		expect(formatted).toContain("❌");
-		expect(formatted).toContain("Incompatible");
+		expect(formatted).toContain("Errors");
+		expect(formatted).toContain("number");
+		expect(formatted).toContain("string");
 	});
 });

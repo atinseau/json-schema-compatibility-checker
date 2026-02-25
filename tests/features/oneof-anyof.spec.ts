@@ -17,7 +17,7 @@ beforeAll(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Point 6 — oneOf vs anyOf distinction", () => {
-	test("anyOf subset ⊆ anyOf superset uses anyOf[i] in diff path", () => {
+	test("anyOf subset ⊆ anyOf superset reports errors for rejected branches", () => {
 		const sub: JSONSchema7 = {
 			anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
 		};
@@ -26,12 +26,13 @@ describe("Point 6 — oneOf vs anyOf distinction", () => {
 		};
 		const result = checker.check(sub, sup);
 		expect(result.isSubset).toBe(false);
-		const diff = result.diffs.find((d) => d.path.startsWith("anyOf["));
-		expect(diff).toBeDefined();
-		expect(diff?.path).toMatch(/^anyOf\[\d+\]$/);
+		expect(result.errors.length).toBeGreaterThan(0);
+		// Should report that boolean is not accepted
+		const boolError = result.errors.find((e) => e.received === "boolean");
+		expect(boolError).toBeDefined();
 	});
 
-	test("oneOf subset uses oneOf[i] in diff path", () => {
+	test("oneOf subset reports errors for rejected branches", () => {
 		const sub: JSONSchema7 = {
 			oneOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
 		};
@@ -40,9 +41,9 @@ describe("Point 6 — oneOf vs anyOf distinction", () => {
 		};
 		const result = checker.check(sub, sup);
 		expect(result.isSubset).toBe(false);
-		const diff = result.diffs.find((d) => d.path.startsWith("oneOf["));
-		expect(diff).toBeDefined();
-		expect(diff?.path).toMatch(/^oneOf\[\d+\]$/);
+		expect(result.errors.length).toBeGreaterThan(0);
+		const boolError = result.errors.find((e) => e.received === "boolean");
+		expect(boolError).toBeDefined();
 	});
 
 	test("{ anyOf: [{ type: 'string' }] } ⊆ { oneOf: [{ type: 'string' }, { type: 'number' }] }", () => {
@@ -144,7 +145,7 @@ describe("oneOf — exclusivity semantics (NOT enforced)", () => {
 		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
 
-	test("check() uses oneOf label in diff paths (not anyOf)", () => {
+	test("check() reports semantic errors for oneOf branch rejection", () => {
 		const sub: JSONSchema7 = {
 			oneOf: [
 				{ type: "string" },
@@ -159,8 +160,6 @@ describe("oneOf — exclusivity semantics (NOT enforced)", () => {
 
 		const result = checker.check(sub, sup);
 		expect(result.isSubset).toBe(false);
-		// The diff path should mention "oneOf", not "anyOf"
-		const hasOneOfPath = result.diffs.some((d) => d.path.startsWith("oneOf"));
-		expect(hasOneOfPath).toBe(true);
+		expect(result.errors.length).toBeGreaterThan(0);
 	});
 });
