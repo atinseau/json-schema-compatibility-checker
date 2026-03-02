@@ -1,9 +1,9 @@
 import type { JSONSchema7 } from "json-schema";
 import { bench, boxplot, summary } from "mitata";
-import { JsonSchemaCompatibilityChecker } from "../src";
+import { MergeEngine, resolveConditions } from "../src";
 import { run } from "./collect";
 
-const checker = new JsonSchemaCompatibilityChecker();
+const engine = new MergeEngine();
 
 // ─── Simple if/then/else ─────────────────────────────────────────────────────
 
@@ -484,16 +484,16 @@ const personalTypeData = { type: "personal" };
 summary(() => {
 	boxplot(() => {
 		bench("simple: then-branch (business)", () =>
-			checker.resolveConditions(formSchema, businessData),
+			resolveConditions(formSchema, businessData, engine),
 		);
 		bench("simple: else-branch (personal)", () =>
-			checker.resolveConditions(formSchema, personalData),
+			resolveConditions(formSchema, personalData, engine),
 		);
 		bench("simple: missing discriminant (empty data)", () =>
-			checker.resolveConditions(formSchema, emptyData),
+			resolveConditions(formSchema, emptyData, engine),
 		);
 		bench("passthrough: no if/then/else", () =>
-			checker.resolveConditions(noConditionSchema, emptyData),
+			resolveConditions(noConditionSchema, emptyData, engine),
 		);
 	});
 });
@@ -501,10 +501,10 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("if/then only: matching → then", () =>
-			checker.resolveConditions(ifThenOnlySchema, activeData),
+			resolveConditions(ifThenOnlySchema, activeData, engine),
 		);
 		bench("if/then only: not matching → no extra constraints", () =>
-			checker.resolveConditions(ifThenOnlySchema, inactiveData),
+			resolveConditions(ifThenOnlySchema, inactiveData, engine),
 		);
 	});
 });
@@ -512,10 +512,10 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("enum condition: premium → then", () =>
-			checker.resolveConditions(enumConditionSchema, premiumData),
+			resolveConditions(enumConditionSchema, premiumData, engine),
 		);
 		bench("enum condition: free → else", () =>
-			checker.resolveConditions(enumConditionSchema, freeData),
+			resolveConditions(enumConditionSchema, freeData, engine),
 		);
 	});
 });
@@ -523,16 +523,16 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("property override: maxLength reduced", () =>
-			checker.resolveConditions(overrideSchema, shortModeData),
+			resolveConditions(overrideSchema, shortModeData, engine),
 		);
 		bench("property override: no override", () =>
-			checker.resolveConditions(overrideSchema, longModeData),
+			resolveConditions(overrideSchema, longModeData, engine),
 		);
 		bench("additionalProperties override: true → false", () =>
-			checker.resolveConditions(additionalPropsOverrideSchema, strictModeData),
+			resolveConditions(additionalPropsOverrideSchema, strictModeData, engine),
 		);
 		bench("array override: minItems 1 → 5", () =>
-			checker.resolveConditions(arrayOverrideSchema, strictModeData),
+			resolveConditions(arrayOverrideSchema, strictModeData, engine),
 		);
 	});
 });
@@ -540,10 +540,10 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("nested: safe config → then (recursive)", () =>
-			checker.resolveConditions(nestedConditionSchema, safeConfigData),
+			resolveConditions(nestedConditionSchema, safeConfigData, engine),
 		);
 		bench("nested: fast config → else (recursive)", () =>
-			checker.resolveConditions(nestedConditionSchema, fastConfigData),
+			resolveConditions(nestedConditionSchema, fastConfigData, engine),
 		);
 	});
 });
@@ -551,16 +551,16 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("allOf: both conditions match", () =>
-			checker.resolveConditions(allOfConditionsSchema, allOfBothMatchData),
+			resolveConditions(allOfConditionsSchema, allOfBothMatchData, engine),
 		);
 		bench("allOf: first condition only", () =>
-			checker.resolveConditions(allOfConditionsSchema, allOfFirstMatchData),
+			resolveConditions(allOfConditionsSchema, allOfFirstMatchData, engine),
 		);
 		bench("allOf: second condition only", () =>
-			checker.resolveConditions(allOfConditionsSchema, allOfSecondMatchData),
+			resolveConditions(allOfConditionsSchema, allOfSecondMatchData, engine),
 		);
 		bench("allOf: no conditions match", () =>
-			checker.resolveConditions(allOfConditionsSchema, allOfNoMatchData),
+			resolveConditions(allOfConditionsSchema, allOfNoMatchData, engine),
 		);
 	});
 });
@@ -568,16 +568,16 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("allOf else: debug → then", () =>
-			checker.resolveConditions(allOfWithElseSchema, debugModeData),
+			resolveConditions(allOfWithElseSchema, debugModeData, engine),
 		);
 		bench("allOf else: production → else", () =>
-			checker.resolveConditions(allOfWithElseSchema, productionModeData),
+			resolveConditions(allOfWithElseSchema, productionModeData, engine),
 		);
 		bench("allOf mixed: conditional + non-conditional (secret)", () =>
-			checker.resolveConditions(allOfMixedSchema, secretNameData),
+			resolveConditions(allOfMixedSchema, secretNameData, engine),
 		);
 		bench("allOf mixed: conditional + non-conditional (normal)", () =>
-			checker.resolveConditions(allOfMixedSchema, normalNameData),
+			resolveConditions(allOfMixedSchema, normalNameData, engine),
 		);
 	});
 });
@@ -585,10 +585,10 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("combined: top-level + allOf (text)", () =>
-			checker.resolveConditions(combinedConditionsSchema, textKindData),
+			resolveConditions(combinedConditionsSchema, textKindData, engine),
 		);
 		bench("combined: top-level + allOf (number)", () =>
-			checker.resolveConditions(combinedConditionsSchema, numberKindData),
+			resolveConditions(combinedConditionsSchema, numberKindData, engine),
 		);
 	});
 });
@@ -596,16 +596,16 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("evaluate: numeric minimum (adult)", () =>
-			checker.resolveConditions(numericConditionSchema, adultData),
+			resolveConditions(numericConditionSchema, adultData, engine),
 		);
 		bench("evaluate: numeric minimum (minor)", () =>
-			checker.resolveConditions(numericConditionSchema, minorData),
+			resolveConditions(numericConditionSchema, minorData, engine),
 		);
 		bench("evaluate: pattern match (valid)", () =>
-			checker.resolveConditions(patternConditionSchema, validCodeData),
+			resolveConditions(patternConditionSchema, validCodeData, engine),
 		);
 		bench("evaluate: pattern match (invalid)", () =>
-			checker.resolveConditions(patternConditionSchema, invalidCodeData),
+			resolveConditions(patternConditionSchema, invalidCodeData, engine),
 		);
 	});
 });
@@ -613,10 +613,10 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("evaluate: format email (valid)", () =>
-			checker.resolveConditions(formatConditionSchema, emailContactData),
+			resolveConditions(formatConditionSchema, emailContactData, engine),
 		);
 		bench("evaluate: format email (invalid)", () =>
-			checker.resolveConditions(formatConditionSchema, phoneContactData),
+			resolveConditions(formatConditionSchema, phoneContactData, engine),
 		);
 	});
 });
@@ -624,10 +624,10 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("evaluate: nested object data (FR)", () =>
-			checker.resolveConditions(nestedObjectConditionSchema, frenchAddressData),
+			resolveConditions(nestedObjectConditionSchema, frenchAddressData, engine),
 		);
 		bench("evaluate: nested object data (US)", () =>
-			checker.resolveConditions(nestedObjectConditionSchema, usAddressData),
+			resolveConditions(nestedObjectConditionSchema, usAddressData, engine),
 		);
 	});
 });
@@ -635,22 +635,22 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("if allOf: email method", () =>
-			checker.resolveConditions(ifAllOfSchema, emailMethodData),
+			resolveConditions(ifAllOfSchema, emailMethodData, engine),
 		);
 		bench("if allOf: phone method", () =>
-			checker.resolveConditions(ifAllOfSchema, phoneMethodData),
+			resolveConditions(ifAllOfSchema, phoneMethodData, engine),
 		);
 		bench("if anyOf: admin role", () =>
-			checker.resolveConditions(ifAnyOfSchema, adminRoleData),
+			resolveConditions(ifAnyOfSchema, adminRoleData, engine),
 		);
 		bench("if anyOf: user role", () =>
-			checker.resolveConditions(ifAnyOfSchema, userRoleData),
+			resolveConditions(ifAnyOfSchema, userRoleData, engine),
 		);
 		bench("if not: business type → then", () =>
-			checker.resolveConditions(ifNotSchema, businessTypeData),
+			resolveConditions(ifNotSchema, businessTypeData, engine),
 		);
 		bench("if not: personal type → else", () =>
-			checker.resolveConditions(ifNotSchema, personalTypeData),
+			resolveConditions(ifNotSchema, personalTypeData, engine),
 		);
 	});
 });

@@ -9,10 +9,10 @@ beforeAll(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  checkResolved — combining resolution + subset check
+//  check with conditions — combining resolution + subset check
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("checkResolved", () => {
+describe("check with conditions", () => {
 	const conditionalSup: JSONSchema7 = {
 		type: "object",
 		properties: {
@@ -46,8 +46,8 @@ describe("checkResolved", () => {
 		expect(checker.isSubset(sub, conditionalSup)).toBe(false);
 
 		// With resolution: true!
-		const result = checker.checkResolved(sub, conditionalSup, {
-			kind: "text",
+		const result = checker.check(sub, conditionalSup, {
+			subData: { kind: "text" },
 		});
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSup.branch).toBe("then");
@@ -63,8 +63,8 @@ describe("checkResolved", () => {
 			required: ["kind", "value"],
 		};
 
-		const result = checker.checkResolved(sub, conditionalSup, {
-			kind: "data",
+		const result = checker.check(sub, conditionalSup, {
+			subData: { kind: "data" },
 		});
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSup.branch).toBe("else");
@@ -80,8 +80,8 @@ describe("checkResolved", () => {
 			required: ["kind", "value"],
 		};
 
-		const result = checker.checkResolved(sub, conditionalSup, {
-			kind: "text",
+		const result = checker.check(sub, conditionalSup, {
+			subData: { kind: "text" },
 		});
 		expect(result.isSubset).toBe(false);
 	});
@@ -96,8 +96,8 @@ describe("checkResolved", () => {
 			required: ["kind", "value"],
 		};
 
-		const result = checker.checkResolved(sub, conditionalSup, {
-			kind: "text",
+		const result = checker.check(sub, conditionalSup, {
+			subData: { kind: "text" },
 		});
 
 		expect(result.resolvedSub).toBeDefined();
@@ -118,8 +118,8 @@ describe("checkResolved", () => {
 			then: { properties: { value: { type: "string", minLength: 1 } } },
 		};
 
-		const result = checker.checkResolved(sub, conditionalSup, {
-			kind: "text",
+		const result = checker.check(sub, conditionalSup, {
+			subData: { kind: "text" },
 		});
 
 		// Both resolved with { kind: "text" }
@@ -134,20 +134,16 @@ describe("checkResolved", () => {
 			required: ["kind", "value"],
 		};
 
-		const resultThen = checker.checkResolved(
-			sub,
-			conditionalSup,
-			{ kind: "text" },
-			{ kind: "text" },
-		);
+		const resultThen = checker.check(sub, conditionalSup, {
+			subData: { kind: "text" },
+			supData: { kind: "text" },
+		});
 		expect(resultThen.resolvedSup.branch).toBe("then");
 
-		const resultElse = checker.checkResolved(
-			sub,
-			conditionalSup,
-			{ kind: "text" },
-			{ kind: "other" },
-		);
+		const resultElse = checker.check(sub, conditionalSup, {
+			subData: { kind: "text" },
+			supData: { kind: "other" },
+		});
 		expect(resultElse.resolvedSup.branch).toBe("else");
 	});
 
@@ -196,8 +192,8 @@ describe("checkResolved", () => {
 		expect(checker.isSubset(businessOutput, formSchema)).toBe(false);
 
 		// With resolution: true!
-		const result = checker.checkResolved(businessOutput, formSchema, {
-			accountType: "business",
+		const result = checker.check(businessOutput, formSchema, {
+			subData: { accountType: "business" },
 		});
 		expect(result.isSubset).toBe(true);
 	});
@@ -239,8 +235,8 @@ describe("checkResolved", () => {
 			additionalProperties: false,
 		};
 
-		const result = checker.checkResolved(personalOutput, formSchema, {
-			accountType: "personal",
+		const result = checker.check(personalOutput, formSchema, {
+			subData: { accountType: "personal" },
 		});
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSup.branch).toBe("else");
@@ -272,15 +268,15 @@ describe("checkResolved", () => {
 			// Missing companyName!
 		};
 
-		const result = checker.checkResolved(incomplete, formSchema, {
-			accountType: "business",
+		const result = checker.check(incomplete, formSchema, {
+			subData: { accountType: "business" },
 		});
 		expect(result.isSubset).toBe(false);
 	});
 
-	// ── Nested conditional with checkResolved ────────────────────────────────
+	// ── Nested conditional with check + conditions ───────────────────────────
 
-	test("nested conditional resolved via checkResolved", () => {
+	test("nested conditional resolved via check with conditions", () => {
 		const sup: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -318,8 +314,8 @@ describe("checkResolved", () => {
 			required: ["config"],
 		};
 
-		const result = checker.checkResolved(sub, sup, {
-			config: { mode: "safe" },
+		const result = checker.check(sub, sup, {
+			subData: { config: { mode: "safe" } },
 		});
 		expect(result.isSubset).toBe(true);
 	});

@@ -1,11 +1,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { JSONSchema7 } from "json-schema";
-import { JsonSchemaCompatibilityChecker } from "../../src";
+import { MergeEngine, resolveConditions } from "../../src";
 
-let checker: JsonSchemaCompatibilityChecker;
+let engine: MergeEngine;
 
 beforeAll(() => {
-	checker = new JsonSchemaCompatibilityChecker();
+	engine = new MergeEngine();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -43,9 +43,13 @@ describe("resolveConditions", () => {
 	// ── Branch selection ─────────────────────────────────────────────────────
 
 	test("resolves then-branch when data matches if-condition", () => {
-		const { resolved, branch } = checker.resolveConditions(formSchema, {
-			accountType: "business",
-		});
+		const { resolved, branch } = resolveConditions(
+			formSchema,
+			{
+				accountType: "business",
+			},
+			engine,
+		);
 
 		expect(branch).toBe("then");
 		expect(resolved.if).toBeUndefined();
@@ -56,9 +60,13 @@ describe("resolveConditions", () => {
 	});
 
 	test("resolves else-branch when data does not match if-condition", () => {
-		const { resolved, branch } = checker.resolveConditions(formSchema, {
-			accountType: "personal",
-		});
+		const { resolved, branch } = resolveConditions(
+			formSchema,
+			{
+				accountType: "personal",
+			},
+			engine,
+		);
 
 		expect(branch).toBe("else");
 		expect(resolved.if).toBeUndefined();
@@ -68,7 +76,7 @@ describe("resolveConditions", () => {
 	});
 
 	test("resolves else-branch when discriminant is missing from data", () => {
-		const { resolved, branch } = checker.resolveConditions(formSchema, {});
+		const { resolved, branch } = resolveConditions(formSchema, {}, engine);
 
 		expect(branch).toBe("else");
 		expect(resolved.required).toContain("firstName");
@@ -77,24 +85,32 @@ describe("resolveConditions", () => {
 	// ── Discriminant tracking ────────────────────────────────────────────────
 
 	test("reports discriminant values used for resolution", () => {
-		const { discriminant } = checker.resolveConditions(formSchema, {
-			accountType: "business",
-		});
+		const { discriminant } = resolveConditions(
+			formSchema,
+			{
+				accountType: "business",
+			},
+			engine,
+		);
 
 		expect(discriminant).toEqual({ accountType: "business" });
 	});
 
 	test("discriminant is empty when data lacks discriminant fields", () => {
-		const { discriminant } = checker.resolveConditions(formSchema, {});
+		const { discriminant } = resolveConditions(formSchema, {}, engine);
 		expect(discriminant).toEqual({});
 	});
 
 	// ── Removal of if/then/else ──────────────────────────────────────────────
 
 	test("resolved schema has no if/then/else keywords", () => {
-		const { resolved } = checker.resolveConditions(formSchema, {
-			accountType: "business",
-		});
+		const { resolved } = resolveConditions(
+			formSchema,
+			{
+				accountType: "business",
+			},
+			engine,
+		);
 
 		expect("if" in resolved).toBe(false);
 		expect("then" in resolved).toBe(false);
@@ -104,9 +120,13 @@ describe("resolveConditions", () => {
 	// ── Base required preserved ──────────────────────────────────────────────
 
 	test("base required fields are preserved alongside branch required", () => {
-		const { resolved } = checker.resolveConditions(formSchema, {
-			accountType: "business",
-		});
+		const { resolved } = resolveConditions(
+			formSchema,
+			{
+				accountType: "business",
+			},
+			engine,
+		);
 
 		// Base required
 		expect(resolved.required).toContain("accountType");
@@ -125,7 +145,7 @@ describe("resolveConditions", () => {
 			then: { required: ["x"] },
 		};
 
-		const { resolved } = checker.resolveConditions(schema, { x: "a" });
+		const { resolved } = resolveConditions(schema, { x: "a" }, engine);
 		const xCount = resolved.required?.filter((r) => r === "x").length;
 		expect(xCount).toBe(1);
 	});
@@ -146,7 +166,7 @@ describe("resolveConditions", () => {
 			},
 		};
 
-		const { resolved } = checker.resolveConditions(schema, { mode: "strict" });
+		const { resolved } = resolveConditions(schema, { mode: "strict" }, engine);
 		const valueProp = resolved.properties?.value as JSONSchema7;
 
 		expect(valueProp.type).toBe("string");
@@ -166,7 +186,7 @@ describe("resolveConditions", () => {
 			else: { properties: { output: { type: "string" } } },
 		};
 
-		const { resolved } = checker.resolveConditions(schema, { mode: "text" });
+		const { resolved } = resolveConditions(schema, { mode: "text" }, engine);
 		const outputProp = resolved.properties?.output as JSONSchema7;
 
 		expect(outputProp.type).toBe("string");
@@ -181,7 +201,7 @@ describe("resolveConditions", () => {
 			required: ["name"],
 		};
 
-		const { resolved, branch } = checker.resolveConditions(schema, {});
+		const { resolved, branch } = resolveConditions(schema, {}, engine);
 
 		expect(branch).toBeNull();
 		expect(resolved.type).toBe("object");
@@ -202,9 +222,13 @@ describe("resolveConditions", () => {
 			then: { required: ["activatedAt"] },
 		};
 
-		const { resolved, branch } = checker.resolveConditions(schema, {
-			status: "active",
-		});
+		const { resolved, branch } = resolveConditions(
+			schema,
+			{
+				status: "active",
+			},
+			engine,
+		);
 
 		expect(branch).toBe("then");
 		expect(resolved.required).toContain("activatedAt");
@@ -222,9 +246,13 @@ describe("resolveConditions", () => {
 			then: { required: ["activatedAt"] },
 		};
 
-		const { resolved, branch } = checker.resolveConditions(schema, {
-			status: "inactive",
-		});
+		const { resolved, branch } = resolveConditions(
+			schema,
+			{
+				status: "inactive",
+			},
+			engine,
+		);
 
 		expect(branch).toBe("else");
 		expect(resolved.required).not.toContain("activatedAt");
@@ -254,11 +282,11 @@ describe("resolveConditions", () => {
 			},
 		};
 
-		const premium = checker.resolveConditions(schema, { tier: "premium" });
+		const premium = resolveConditions(schema, { tier: "premium" }, engine);
 		expect(premium.branch).toBe("then");
 		expect(premium.resolved.required).toContain("limit");
 
-		const free = checker.resolveConditions(schema, { tier: "free" });
+		const free = resolveConditions(schema, { tier: "free" }, engine);
 		expect(free.branch).toBe("else");
 		expect(free.resolved.required).not.toContain("limit");
 	});
@@ -290,9 +318,13 @@ describe("resolveConditions", () => {
 			required: ["config"],
 		};
 
-		const { resolved, discriminant } = checker.resolveConditions(schema, {
-			config: { mode: "safe" },
-		});
+		const { resolved, discriminant } = resolveConditions(
+			schema,
+			{
+				config: { mode: "safe" },
+			},
+			engine,
+		);
 
 		const configProp = resolved.properties?.config as JSONSchema7;
 		expect(configProp.required).toContain("retries");
@@ -320,9 +352,13 @@ describe("resolveConditions", () => {
 			required: ["config"],
 		};
 
-		const { resolved } = checker.resolveConditions(schema, {
-			config: { mode: "fast" },
-		});
+		const { resolved } = resolveConditions(
+			schema,
+			{
+				config: { mode: "fast" },
+			},
+			engine,
+		);
 
 		const configProp = resolved.properties?.config as JSONSchema7;
 		expect(configProp.required).not.toContain("retries");
@@ -343,7 +379,7 @@ describe("resolveConditions", () => {
 		};
 
 		// No data for "child" property — should resolve via empty object → else
-		const { resolved } = checker.resolveConditions(schema, {});
+		const { resolved } = resolveConditions(schema, {}, engine);
 		const childProp = resolved.properties?.child as JSONSchema7;
 		expect(childProp.if).toBeUndefined();
 	});
@@ -395,9 +431,10 @@ describe("resolveConditions with allOf containing if/then/else", () => {
 	};
 
 	test("no allOf condition matches when discriminant fields are missing", () => {
-		const { resolved, branch } = checker.resolveConditions(
+		const { resolved, branch } = resolveConditions(
 			schemaWithAllOfConditions,
 			{ name: "Alice" },
+			engine,
 		);
 
 		// No top-level if/then/else → branch is null
@@ -429,10 +466,14 @@ describe("resolveConditions with allOf containing if/then/else", () => {
 	});
 
 	test("first allOf condition matches, second does not", () => {
-		const { resolved } = checker.resolveConditions(schemaWithAllOfConditions, {
-			name: "Alice",
-			age: 25,
-		});
+		const { resolved } = resolveConditions(
+			schemaWithAllOfConditions,
+			{
+				name: "Alice",
+				age: 25,
+			},
+			engine,
+		);
 
 		expect(resolved.allOf).toBeUndefined();
 
@@ -449,10 +490,14 @@ describe("resolveConditions with allOf containing if/then/else", () => {
 	});
 
 	test("second allOf condition matches, first does not", () => {
-		const { resolved } = checker.resolveConditions(schemaWithAllOfConditions, {
-			name: "Alice",
-			role: "admin",
-		});
+		const { resolved } = resolveConditions(
+			schemaWithAllOfConditions,
+			{
+				name: "Alice",
+				role: "admin",
+			},
+			engine,
+		);
 
 		expect(resolved.allOf).toBeUndefined();
 
@@ -469,11 +514,15 @@ describe("resolveConditions with allOf containing if/then/else", () => {
 	});
 
 	test("both allOf conditions match", () => {
-		const { resolved } = checker.resolveConditions(schemaWithAllOfConditions, {
-			name: "Alice",
-			age: 25,
-			role: "admin",
-		});
+		const { resolved } = resolveConditions(
+			schemaWithAllOfConditions,
+			{
+				name: "Alice",
+				age: 25,
+				role: "admin",
+			},
+			engine,
+		);
 
 		expect(resolved.allOf).toBeUndefined();
 
@@ -493,9 +542,10 @@ describe("resolveConditions with allOf containing if/then/else", () => {
 		// with numeric constraints (exclusiveMinimum, minimum, maximum, etc.).
 		// age uses type + exclusiveMinimum → now collected.
 		// role uses const → collected.
-		const { discriminant } = checker.resolveConditions(
+		const { discriminant } = resolveConditions(
 			schemaWithAllOfConditions,
 			{ name: "Alice", age: 25, role: "admin" },
+			engine,
 		);
 
 		expect(discriminant.age).toBe(25);
@@ -528,17 +578,25 @@ describe("resolveConditions with allOf containing if/then/else", () => {
 		};
 
 		// Match → then branch
-		const thenResult = checker.resolveConditions(schemaWithElse, {
-			mode: "advanced",
-		});
+		const thenResult = resolveConditions(
+			schemaWithElse,
+			{
+				mode: "advanced",
+			},
+			engine,
+		);
 		expect(thenResult.resolved.properties?.debug).toEqual({ type: "boolean" });
 		expect(thenResult.resolved.required).toContain("debug");
 		expect(thenResult.resolved.properties?.simple).toBeUndefined();
 
 		// No match → else branch
-		const elseResult = checker.resolveConditions(schemaWithElse, {
-			mode: "basic",
-		});
+		const elseResult = resolveConditions(
+			schemaWithElse,
+			{
+				mode: "basic",
+			},
+			engine,
+		);
 		expect(elseResult.resolved.properties?.simple).toEqual({
 			type: "boolean",
 		});
@@ -566,7 +624,7 @@ describe("resolveConditions with allOf containing if/then/else", () => {
 			],
 		};
 
-		const { resolved } = checker.resolveConditions(schema, { name: "admin" });
+		const { resolved } = resolveConditions(schema, { name: "admin" }, engine);
 
 		// Non-conditional allOf entry should be preserved
 		expect(resolved.allOf).toBeDefined();
@@ -578,10 +636,14 @@ describe("resolveConditions with allOf containing if/then/else", () => {
 	});
 
 	test("allOf resolved schema has no if/then/else keywords", () => {
-		const { resolved } = checker.resolveConditions(schemaWithAllOfConditions, {
-			name: "Alice",
-			age: 25,
-		});
+		const { resolved } = resolveConditions(
+			schemaWithAllOfConditions,
+			{
+				name: "Alice",
+				age: 25,
+			},
+			engine,
+		);
 
 		expect(resolved.if).toBeUndefined();
 		expect(resolved.then).toBeUndefined();
@@ -620,9 +682,13 @@ describe("resolveConditions with allOf containing if/then/else", () => {
 			],
 		};
 
-		const { resolved, branch } = checker.resolveConditions(schema, {
-			kind: "number",
-		});
+		const { resolved, branch } = resolveConditions(
+			schema,
+			{
+				kind: "number",
+			},
+			engine,
+		);
 
 		// Top-level if/then/else resolved
 		expect(branch).toBe("then");

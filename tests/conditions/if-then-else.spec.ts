@@ -1,11 +1,17 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { JSONSchema7 } from "json-schema";
-import { JsonSchemaCompatibilityChecker } from "../../src";
+import {
+	JsonSchemaCompatibilityChecker,
+	MergeEngine,
+	resolveConditions,
+} from "../../src";
 
 let checker: JsonSchemaCompatibilityChecker;
+let engine: MergeEngine;
 
 beforeAll(() => {
 	checker = new JsonSchemaCompatibilityChecker();
+	engine = new MergeEngine();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -138,7 +144,7 @@ describe("Point 4 — mergeBranchInto fix", () => {
 			},
 			then: { additionalProperties: false },
 		};
-		const { resolved } = checker.resolveConditions(schema, { mode: "strict" });
+		const { resolved } = resolveConditions(schema, { mode: "strict" }, engine);
 		expect(resolved.additionalProperties).toBe(false);
 	});
 
@@ -158,7 +164,7 @@ describe("Point 4 — mergeBranchInto fix", () => {
 				properties: { name: { type: "string", maxLength: 50 } },
 			},
 		};
-		const { resolved } = checker.resolveConditions(schema, { mode: "short" });
+		const { resolved } = resolveConditions(schema, { mode: "short" }, engine);
 		const nameProp = resolved.properties?.name as JSONSchema7;
 		expect(nameProp.maxLength).toBe(50);
 	});
@@ -181,7 +187,7 @@ describe("Point 4 — mergeBranchInto fix", () => {
 				},
 			},
 		};
-		const { resolved } = checker.resolveConditions(schema, { mode: "strict" });
+		const { resolved } = resolveConditions(schema, { mode: "strict" }, engine);
 		const tagsProp = resolved.properties?.tags as JSONSchema7;
 		expect(tagsProp.minItems).toBe(5);
 	});
@@ -202,7 +208,7 @@ describe("Point 4 — mergeBranchInto fix", () => {
 				items: { type: "string", minLength: 3 },
 			},
 		};
-		const { resolved } = checker.resolveConditions(schema, { mode: "strict" });
+		const { resolved } = resolveConditions(schema, { mode: "strict" }, engine);
 		const items = resolved.items as JSONSchema7;
 		expect(items.type).toBe("string");
 		expect(items.minLength).toBe(3);
@@ -301,8 +307,8 @@ describe("if/then/else — pure subset check (no data)", () => {
 			required: ["kind", "value"],
 		};
 
-		const result = checker.checkResolved(sub, conditionalSchema, {
-			kind: "text",
+		const result = checker.check(sub, conditionalSchema, {
+			subData: { kind: "text" },
 		});
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSup.branch).toBe("then");

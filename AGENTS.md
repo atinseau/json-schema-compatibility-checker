@@ -158,7 +158,7 @@ describe("featureName", () => {
 - Module-level header comments use box format: `// ─── Module Name ───────────`
 - JSDoc on all public functions with `@param`, `@returns`, `@example` when useful
 - Inline comments explain the "why", not the "what"
-- Use French in comments when extending existing French documentation or comments; use English for new code comments
+- Use English in comments; use English for new code comments, If you see french in commentary, you can translate it to English.
 
 ## Anti-Patterns to Avoid
 

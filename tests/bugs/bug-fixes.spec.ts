@@ -1,11 +1,17 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { JSONSchema7 } from "json-schema";
-import { JsonSchemaCompatibilityChecker } from "../../src";
+import {
+	JsonSchemaCompatibilityChecker,
+	MergeEngine,
+	resolveConditions,
+} from "../../src";
 
 let checker: JsonSchemaCompatibilityChecker;
+let engine: MergeEngine;
 
 beforeAll(() => {
 	checker = new JsonSchemaCompatibilityChecker();
+	engine = new MergeEngine();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -31,7 +37,7 @@ describe("Bug 2 — evaluateCondition: absent properties must not fail validatio
 			},
 		};
 
-		const { branch } = checker.resolveConditions(schema, {});
+		const { branch } = resolveConditions(schema, {}, engine);
 		// properties doesn't constrain absent props → if passes → then
 		expect(branch).toBe("then");
 	});
@@ -53,7 +59,7 @@ describe("Bug 2 — evaluateCondition: absent properties must not fail validatio
 			},
 		};
 
-		const { branch } = checker.resolveConditions(schema, {});
+		const { branch } = resolveConditions(schema, {}, engine);
 		// required blocks → if fails → else
 		expect(branch).toBe("else");
 	});
@@ -73,9 +79,13 @@ describe("Bug 2 — evaluateCondition: absent properties must not fail validatio
 			},
 		};
 
-		const { branch } = checker.resolveConditions(schema, {
-			accountType: "personal",
-		});
+		const { branch } = resolveConditions(
+			schema,
+			{
+				accountType: "personal",
+			},
+			engine,
+		);
 		// Property present but value doesn't match → if fails → else
 		expect(branch).toBe("else");
 	});
@@ -92,7 +102,7 @@ describe("Bug 2 — evaluateCondition: absent properties must not fail validatio
 			else: {},
 		};
 
-		const { branch } = checker.resolveConditions(schema, {});
+		const { branch } = resolveConditions(schema, {}, engine);
 		expect(branch).toBe("then");
 	});
 });
@@ -115,9 +125,13 @@ describe("Bug 3 — evaluateCondition: deep equality for const and enum", () => 
 		};
 
 		// Different object reference, same structure → should match via isEqual
-		const { branch } = checker.resolveConditions(schema, {
-			config: { mode: "advanced", level: 3 },
-		});
+		const { branch } = resolveConditions(
+			schema,
+			{
+				config: { mode: "advanced", level: 3 },
+			},
+			engine,
+		);
 		expect(branch).toBe("then");
 	});
 
@@ -137,9 +151,13 @@ describe("Bug 3 — evaluateCondition: deep equality for const and enum", () => 
 			else: {},
 		};
 
-		const { branch } = checker.resolveConditions(schema, {
-			config: { mode: "basic", level: 1 },
-		});
+		const { branch } = resolveConditions(
+			schema,
+			{
+				config: { mode: "basic", level: 1 },
+			},
+			engine,
+		);
 		expect(branch).toBe("else");
 	});
 
@@ -158,9 +176,13 @@ describe("Bug 3 — evaluateCondition: deep equality for const and enum", () => 
 			else: {},
 		};
 
-		const { branch } = checker.resolveConditions(schema, {
-			tags: [1, 2, 3],
-		});
+		const { branch } = resolveConditions(
+			schema,
+			{
+				tags: [1, 2, 3],
+			},
+			engine,
+		);
 		expect(branch).toBe("then");
 	});
 
@@ -180,9 +202,13 @@ describe("Bug 3 — evaluateCondition: deep equality for const and enum", () => 
 		};
 
 		// { a: 1 } is structurally equal to the first enum entry
-		const { branch } = checker.resolveConditions(schema, {
-			setting: { a: 1 },
-		});
+		const { branch } = resolveConditions(
+			schema,
+			{
+				setting: { a: 1 },
+			},
+			engine,
+		);
 		expect(branch).toBe("then");
 	});
 
@@ -201,9 +227,13 @@ describe("Bug 3 — evaluateCondition: deep equality for const and enum", () => 
 			else: {},
 		};
 
-		const { branch } = checker.resolveConditions(schema, {
-			setting: { c: 3 },
-		});
+		const { branch } = resolveConditions(
+			schema,
+			{
+				setting: { c: 3 },
+			},
+			engine,
+		);
 		expect(branch).toBe("else");
 	});
 });

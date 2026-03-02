@@ -296,13 +296,13 @@ const allOfData = { name: "Alice", age: 25, role: "admin" };
 summary(() => {
 	boxplot(() => {
 		bench("then-branch match (text → string)", () =>
-			checker.checkResolved(subMatchingThen, conditionalSup, thenData),
+			checker.check(subMatchingThen, conditionalSup, { subData: thenData }),
 		);
 		bench("else-branch match (data → number)", () =>
-			checker.checkResolved(subMatchingElse, conditionalSup, elseData),
+			checker.check(subMatchingElse, conditionalSup, { subData: elseData }),
 		);
 		bench("violating resolved branch (text → wrong type)", () =>
-			checker.checkResolved(subViolating, conditionalSup, thenData),
+			checker.check(subViolating, conditionalSup, { subData: thenData }),
 		);
 	});
 });
@@ -310,17 +310,19 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("form: business output ⊆ conditional form (resolved)", () =>
-			checker.checkResolved(businessOutput, formSchema, businessFormData),
+			checker.check(businessOutput, formSchema, {
+				subData: businessFormData,
+			}),
 		);
 		bench("form: personal output ⊆ conditional form (resolved)", () =>
-			checker.checkResolved(personalOutput, formSchema, personalFormData),
+			checker.check(personalOutput, formSchema, {
+				subData: personalFormData,
+			}),
 		);
 		bench("form: incomplete output ⊄ conditional form (missing required)", () =>
-			checker.checkResolved(
-				incompleteOutput,
-				incompleteFormSchema,
-				businessFormData,
-			),
+			checker.check(incompleteOutput, incompleteFormSchema, {
+				subData: businessFormData,
+			}),
 		);
 	});
 });
@@ -328,7 +330,9 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("nested: safe config (recursive resolution)", () =>
-			checker.checkResolved(nestedSub, nestedConditionalSup, nestedData),
+			checker.check(nestedSub, nestedConditionalSup, {
+				subData: nestedData,
+			}),
 		);
 	});
 });
@@ -336,20 +340,16 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("separate supData: then resolution", () =>
-			checker.checkResolved(
-				subForSeparateData,
-				conditionalSup,
-				thenData,
-				supDataThen,
-			),
+			checker.check(subForSeparateData, conditionalSup, {
+				subData: thenData,
+				supData: supDataThen,
+			}),
 		);
 		bench("separate supData: else resolution", () =>
-			checker.checkResolved(
-				subForSeparateData,
-				conditionalSup,
-				thenData,
-				supDataElse,
-			),
+			checker.check(subForSeparateData, conditionalSup, {
+				subData: thenData,
+				supData: supDataElse,
+			}),
 		);
 	});
 });
@@ -357,7 +357,9 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("sub with own conditions: both resolved", () =>
-			checker.checkResolved(subWithConditions, conditionalSup, thenData),
+			checker.check(subWithConditions, conditionalSup, {
+				subData: thenData,
+			}),
 		);
 	});
 });
@@ -365,7 +367,7 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("pattern: resolved sup adds pattern constraint", () =>
-			checker.checkResolved(patternSub, patternSup, patternData),
+			checker.check(patternSub, patternSup, { subData: patternData }),
 		);
 	});
 });
@@ -373,20 +375,20 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("allOf: multiple conditions in allOf resolved", () =>
-			checker.checkResolved(allOfSub, allOfConditionalSup, allOfData),
+			checker.check(allOfSub, allOfConditionalSup, { subData: allOfData }),
 		);
 	});
 });
 
-// ─── Comparison: isSubset (without resolution) vs checkResolved ──────────────
+// ─── Comparison: isSubset (without resolution) vs check with conditions ──────
 
 summary(() => {
 	boxplot(() => {
 		bench("comparison: isSubset WITHOUT resolution (false negative)", () =>
 			checker.isSubset(subMatchingThen, conditionalSup),
 		);
-		bench("comparison: checkResolved WITH resolution (correct)", () =>
-			checker.checkResolved(subMatchingThen, conditionalSup, thenData),
+		bench("comparison: check WITH resolution (correct)", () =>
+			checker.check(subMatchingThen, conditionalSup, { subData: thenData }),
 		);
 	});
 });

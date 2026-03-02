@@ -1,6 +1,10 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import { JsonSchemaCompatibilityChecker } from "../../src";
+import {
+	JsonSchemaCompatibilityChecker,
+	MergeEngine,
+	resolveConditions,
+} from "../../src";
 
 /** JSONSchema7 with dependencies keyword (typed more broadly for test access) */
 interface JSONSchema7WithDeps extends JSONSchema7 {
@@ -8,9 +12,11 @@ interface JSONSchema7WithDeps extends JSONSchema7 {
 }
 
 let checker: JsonSchemaCompatibilityChecker;
+let engine: MergeEngine;
 
 beforeAll(() => {
 	checker = new JsonSchemaCompatibilityChecker();
+	engine = new MergeEngine();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -74,7 +80,7 @@ describe("Point 3 — dependencies", () => {
 				dependencies: { a: ["b"] },
 			} as JSONSchema7WithDeps,
 		};
-		const { resolved } = checker.resolveConditions(schema, { mode: "strict" });
+		const { resolved } = resolveConditions(schema, { mode: "strict" }, engine);
 		const resolvedWithDeps = resolved as JSONSchema7WithDeps;
 		expect(resolvedWithDeps.dependencies).toBeDefined();
 		expect(resolvedWithDeps.dependencies?.a).toEqual(["b"]);

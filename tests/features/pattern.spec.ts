@@ -5,12 +5,16 @@ import {
 	isPatternSubset,
 	isTrivialPattern,
 	JsonSchemaCompatibilityChecker,
+	MergeEngine,
+	resolveConditions,
 } from "../../src";
 
 let checker: JsonSchemaCompatibilityChecker;
+let engine: MergeEngine;
 
 beforeAll(() => {
 	checker = new JsonSchemaCompatibilityChecker();
+	engine = new MergeEngine();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -422,9 +426,13 @@ describe("Pattern intersection — behavior and limitations", () => {
 				},
 			};
 
-			const { resolved } = checker.resolveConditions(schema, {
-				mode: "strict",
-			});
+			const { resolved } = resolveConditions(
+				schema,
+				{
+					mode: "strict",
+				},
+				engine,
+			);
 			const codeProp = resolved.properties?.code as JSONSchema7;
 			expect(codeProp.pattern).toBe("^[A-Z]{3}-[0-9]{4}$");
 		});
@@ -455,7 +463,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 				required: ["mode", "code"],
 			};
 
-			const result = checker.checkResolved(sub, sup, { mode: "strict" });
+			const result = checker.check(sub, sup, { subData: { mode: "strict" } });
 			expect(result.isSubset).toBe(true);
 		});
 	});

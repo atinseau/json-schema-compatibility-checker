@@ -1,11 +1,17 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import { JsonSchemaCompatibilityChecker } from "../../src";
+import {
+	JsonSchemaCompatibilityChecker,
+	MergeEngine,
+	resolveConditions,
+} from "../../src";
 
 let checker: JsonSchemaCompatibilityChecker;
+let engine: MergeEngine;
 
 beforeAll(() => {
 	checker = new JsonSchemaCompatibilityChecker();
+	engine = new MergeEngine();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -692,9 +698,13 @@ describe("propertyNames — behavior exploration", () => {
 					propertyNames: { pattern: "^[a-z_]+$" },
 				},
 			};
-			const { resolved } = checker.resolveConditions(schema, {
-				mode: "strict",
-			});
+			const { resolved } = resolveConditions(
+				schema,
+				{
+					mode: "strict",
+				},
+				engine,
+			);
 			expect(resolved.propertyNames).toBeDefined();
 			expect((resolved.propertyNames as JSONSchema7).pattern).toBe("^[a-z_]+$");
 		});
@@ -717,9 +727,13 @@ describe("propertyNames — behavior exploration", () => {
 					propertyNames: { minLength: 1 },
 				},
 			};
-			const { resolved } = checker.resolveConditions(schema, {
-				mode: "strict",
-			});
+			const { resolved } = resolveConditions(
+				schema,
+				{
+					mode: "strict",
+				},
+				engine,
+			);
 			expect((resolved.propertyNames as JSONSchema7).pattern).toBe("^[a-z_]+$");
 		});
 
@@ -741,9 +755,13 @@ describe("propertyNames — behavior exploration", () => {
 					propertyNames: { minLength: 1 },
 				},
 			};
-			const { resolved } = checker.resolveConditions(schema, {
-				mode: "relaxed",
-			});
+			const { resolved } = resolveConditions(
+				schema,
+				{
+					mode: "relaxed",
+				},
+				engine,
+			);
 			expect((resolved.propertyNames as JSONSchema7).minLength).toBe(1);
 		});
 	});
