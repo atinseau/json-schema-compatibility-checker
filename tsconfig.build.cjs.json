@@ -1,0 +1,22 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"noEmit": false,
+		"outDir": "./dist/cjs",
+		"declaration": true,
+		"emitDeclarationOnly": true,
+		"module": "CommonJS",
+		"moduleResolution": "Node",
+		"verbatimModuleSyntax": false,
+		"esModuleInterop": true,
+		"allowSyntheticDefaultImports": true,
+		"baseUrl": ".",
+		"paths": {
+			"@x0k/json-schema-merge/lib/*": [
+				"./node_modules/@x0k/json-schema-merge/dist/lib/*"
+			]
+		}
+	},
+	"include": ["src/**/*"],
+	"exclude": ["node_modules", "dist", "tests", "benchmarks"]
+}
