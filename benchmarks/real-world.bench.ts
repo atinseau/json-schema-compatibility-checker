@@ -1,9 +1,14 @@
 import type { JSONSchema7 } from "json-schema";
 import { bench, boxplot, summary } from "mitata";
-import { JsonSchemaCompatibilityChecker } from "../src";
+import {
+	JsonSchemaCompatibilityChecker,
+	MergeEngine,
+	resolveConditions,
+} from "../src";
 import { run } from "./collect";
 
 const checker = new JsonSchemaCompatibilityChecker();
+const engine = new MergeEngine();
 
 // ─── API Response → Expected Input (compatible) ─────────────────────────────
 
@@ -437,18 +442,18 @@ summary(() => {
 	});
 });
 
-// ─── checkResolved: Conditional Form Schemas ─────────────────────────────────
+// ─── check with conditions: Conditional Form Schemas ─────────────────────────
 
 summary(() => {
 	boxplot(() => {
-		bench("checkResolved: business output ⊆ form (resolved)", () =>
-			checker.checkResolved(businessOutput, conditionalFormSchema, {
-				accountType: "business",
+		bench("check+conditions: business output ⊆ form (resolved)", () =>
+			checker.check(businessOutput, conditionalFormSchema, {
+				subData: { accountType: "business" },
 			}),
 		);
-		bench("checkResolved: personal output ⊆ form (resolved)", () =>
-			checker.checkResolved(personalOutput, conditionalFormSchema, {
-				accountType: "personal",
+		bench("check+conditions: personal output ⊆ form (resolved)", () =>
+			checker.check(personalOutput, conditionalFormSchema, {
+				subData: { accountType: "personal" },
 			}),
 		);
 	});
@@ -459,24 +464,36 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("resolveConditions: allOf both match", () =>
-			checker.resolveConditions(allOfConditionalSchema, {
-				name: "Alice",
-				age: 25,
-				role: "admin",
-			}),
+			resolveConditions(
+				allOfConditionalSchema,
+				{
+					name: "Alice",
+					age: 25,
+					role: "admin",
+				},
+				engine,
+			),
 		);
 		bench("resolveConditions: allOf none match", () =>
-			checker.resolveConditions(allOfConditionalSchema, { name: "Dave" }),
+			resolveConditions(allOfConditionalSchema, { name: "Dave" }, engine),
 		);
 		bench("resolveConditions: nested config (safe)", () =>
-			checker.resolveConditions(nestedConditionalConfig, {
-				config: { mode: "safe" },
-			}),
+			resolveConditions(
+				nestedConditionalConfig,
+				{
+					config: { mode: "safe" },
+				},
+				engine,
+			),
 		);
 		bench("resolveConditions: nested config (fast)", () =>
-			checker.resolveConditions(nestedConditionalConfig, {
-				config: { mode: "fast" },
-			}),
+			resolveConditions(
+				nestedConditionalConfig,
+				{
+					config: { mode: "fast" },
+				},
+				engine,
+			),
 		);
 	});
 });
@@ -660,9 +677,13 @@ summary(() => {
 		});
 
 		bench("pipeline: resolveConditions + check (form)", () => {
-			const resolved = checker.resolveConditions(conditionalFormSchema, {
-				accountType: "business",
-			});
+			const resolved = resolveConditions(
+				conditionalFormSchema,
+				{
+					accountType: "business",
+				},
+				engine,
+			);
 			checker.check(businessOutput, resolved.resolved);
 		});
 

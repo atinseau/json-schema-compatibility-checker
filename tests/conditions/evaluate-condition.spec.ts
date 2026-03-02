@@ -1,11 +1,17 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { JSONSchema7 } from "json-schema";
-import { JsonSchemaCompatibilityChecker } from "../../src";
+import {
+	JsonSchemaCompatibilityChecker,
+	MergeEngine,
+	resolveConditions,
+} from "../../src";
 
-let checker: JsonSchemaCompatibilityChecker;
+let _checker: JsonSchemaCompatibilityChecker;
+let engine: MergeEngine;
 
 beforeAll(() => {
-	checker = new JsonSchemaCompatibilityChecker();
+	_checker = new JsonSchemaCompatibilityChecker();
+	engine = new MergeEngine();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -24,7 +30,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			if: { properties: { age: { minimum: 18 } } },
 			then: { required: ["consent"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { age: 25 });
+		const { branch } = resolveConditions(schema, { age: 25 }, engine);
 		expect(branch).toBe("then");
 	});
 
@@ -36,7 +42,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			then: { required: ["consent"] },
 			else: { required: ["guardian"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { age: 10 });
+		const { branch } = resolveConditions(schema, { age: 10 }, engine);
 		expect(branch).toBe("else");
 	});
 
@@ -47,7 +53,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			if: { properties: { age: { exclusiveMinimum: 17 } } },
 			then: { required: ["consent"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { age: 18 });
+		const { branch } = resolveConditions(schema, { age: 18 }, engine);
 		expect(branch).toBe("then");
 	});
 
@@ -58,7 +64,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			if: { properties: { score: { maximum: 100 } } },
 			then: { required: ["level"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { score: 50 });
+		const { branch } = resolveConditions(schema, { score: 50 }, engine);
 		expect(branch).toBe("then");
 	});
 
@@ -70,7 +76,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			then: { required: ["level"] },
 			else: { required: ["warning"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { score: 150 });
+		const { branch } = resolveConditions(schema, { score: 150 }, engine);
 		expect(branch).toBe("else");
 	});
 
@@ -81,7 +87,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			if: { properties: { name: { minLength: 3 } } },
 			then: { required: ["greeting"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { name: "Alice" });
+		const { branch } = resolveConditions(schema, { name: "Alice" }, engine);
 		expect(branch).toBe("then");
 	});
 
@@ -93,7 +99,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			then: { required: ["greeting"] },
 			else: { required: ["nickname"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { name: "Al" });
+		const { branch } = resolveConditions(schema, { name: "Al" }, engine);
 		expect(branch).toBe("else");
 	});
 
@@ -104,7 +110,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			if: { properties: { code: { pattern: "^[A-Z]{3}$" } } },
 			then: { required: ["valid"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { code: "ABC" });
+		const { branch } = resolveConditions(schema, { code: "ABC" }, engine);
 		expect(branch).toBe("then");
 	});
 
@@ -116,7 +122,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			then: { required: ["valid"] },
 			else: { required: ["invalid"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { code: "abc" });
+		const { branch } = resolveConditions(schema, { code: "abc" }, engine);
 		expect(branch).toBe("else");
 	});
 
@@ -127,7 +133,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			if: { properties: { n: { multipleOf: 5 } } },
 			then: { required: ["fiveish"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { n: 15 });
+		const { branch } = resolveConditions(schema, { n: 15 }, engine);
 		expect(branch).toBe("then");
 	});
 
@@ -139,7 +145,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			then: { required: ["fiveish"] },
 			else: { required: ["notFive"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { n: 13 });
+		const { branch } = resolveConditions(schema, { n: 13 }, engine);
 		expect(branch).toBe("else");
 	});
 
@@ -150,9 +156,13 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			if: { properties: { tags: { minItems: 2 } } },
 			then: { required: ["hasTags"] },
 		};
-		const { branch } = checker.resolveConditions(schema, {
-			tags: ["a", "b", "c"],
-		});
+		const { branch } = resolveConditions(
+			schema,
+			{
+				tags: ["a", "b", "c"],
+			},
+			engine,
+		);
 		expect(branch).toBe("then");
 	});
 
@@ -164,7 +174,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			then: { required: ["hasTags"] },
 			else: { required: ["noTags"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { tags: ["a"] });
+		const { branch } = resolveConditions(schema, { tags: ["a"] }, engine);
 		expect(branch).toBe("else");
 	});
 
@@ -180,10 +190,14 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			},
 			then: { required: ["verified"] },
 		};
-		const { discriminant } = checker.resolveConditions(schema, {
-			age: 25,
-			code: "ABC",
-		});
+		const { discriminant } = resolveConditions(
+			schema,
+			{
+				age: 25,
+				code: "ABC",
+			},
+			engine,
+		);
 		expect(discriminant.age).toBe(25);
 		expect(discriminant.code).toBe("ABC");
 	});
@@ -199,7 +213,7 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 			},
 			then: { required: ["employable"] },
 		};
-		const { branch } = checker.resolveConditions(schema, { age: 30 });
+		const { branch } = resolveConditions(schema, { age: 30 }, engine);
 		expect(branch).toBe("then");
 	});
 });
@@ -229,10 +243,14 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				then: { required: ["companyName"] },
 				else: { required: [] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				type: "business",
-				taxId: "123",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					type: "business",
+					taxId: "123",
+				},
+				engine,
+			);
 			expect(branch).toBe("then");
 		});
 
@@ -254,9 +272,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				else: { required: [] },
 			};
 			// type matche mais taxId absent → allOf échoue
-			const { branch } = checker.resolveConditions(schema, {
-				type: "business",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					type: "business",
+				},
+				engine,
+			);
 			expect(branch).toBe("else");
 		});
 
@@ -280,10 +302,14 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 					properties: { contactValue: { pattern: "^\\+?[0-9]+" } },
 				},
 			};
-			const result = checker.resolveConditions(schema, {
-				contactMethod: "email",
-				contactValue: "test@example.com",
-			});
+			const result = resolveConditions(
+				schema,
+				{
+					contactMethod: "email",
+					contactValue: "test@example.com",
+				},
+				engine,
+			);
 			expect(result.branch).toBe("then");
 		});
 	});
@@ -306,9 +332,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				},
 				then: { required: ["permissions"] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				role: "admin",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					role: "admin",
+				},
+				engine,
+			);
 			expect(branch).toBe("then");
 		});
 
@@ -328,9 +358,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				then: { required: ["permissions"] },
 				else: { required: [] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				role: "viewer",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					role: "viewer",
+				},
+				engine,
+			);
 			expect(branch).toBe("else");
 		});
 	});
@@ -353,9 +387,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				},
 				then: { required: ["output"] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				mode: "debug",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					mode: "debug",
+				},
+				engine,
+			);
 			expect(branch).toBe("then");
 		});
 
@@ -372,9 +410,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				then: { required: ["output"] },
 				else: { required: [] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				mode: "production",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					mode: "production",
+				},
+				engine,
+			);
 			expect(branch).toBe("else");
 		});
 	});
@@ -396,9 +438,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				else: { required: [] },
 			};
 			// type="personal" matche le contenu du not → not(true) = false → else
-			const { branch } = checker.resolveConditions(schema, {
-				type: "personal",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					type: "personal",
+				},
+				engine,
+			);
 			expect(branch).toBe("else");
 		});
 
@@ -416,9 +462,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				else: { required: [] },
 			};
 			// type="business" ne matche pas le contenu du not → not(false) = true → then
-			const { branch } = checker.resolveConditions(schema, {
-				type: "business",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					type: "business",
+				},
+				engine,
+			);
 			expect(branch).toBe("then");
 		});
 	});
@@ -446,9 +496,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				},
 				then: { required: ["siret"] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				address: { country: "FR" },
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					address: { country: "FR" },
+				},
+				engine,
+			);
 			expect(branch).toBe("then");
 		});
 
@@ -473,9 +527,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				then: { required: ["siret"] },
 				else: { required: [] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				address: { country: "US" },
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					address: { country: "US" },
+				},
+				engine,
+			);
 			expect(branch).toBe("else");
 		});
 
@@ -497,9 +555,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				else: { required: [] },
 			};
 			// address n'est pas un objet → le check nested est skippé → then
-			const { branch } = checker.resolveConditions(schema, {
-				address: "not-an-object",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					address: "not-an-object",
+				},
+				engine,
+			);
 			expect(branch).toBe("then");
 		});
 	});
@@ -524,9 +586,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 					properties: { contactLabel: { const: "Other" } },
 				},
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				contact: "user@example.com",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					contact: "user@example.com",
+				},
+				engine,
+			);
 			expect(branch).toBe("then");
 		});
 
@@ -547,9 +613,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 					properties: { contactLabel: { const: "Other" } },
 				},
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				contact: "not-an-email",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					contact: "not-an-email",
+				},
+				engine,
+			);
 			expect(branch).toBe("else");
 		});
 
@@ -571,9 +641,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				},
 			};
 			// contact = 42 → typeof !== "string" → format check skippé → then
-			const { branch } = checker.resolveConditions(schema, {
-				contact: 42,
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					contact: 42,
+				},
+				engine,
+			);
 			expect(branch).toBe("then");
 		});
 
@@ -586,9 +660,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				},
 				then: { required: ["id"] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				id: "550e8400-e29b-41d4-a716-446655440000",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					id: "550e8400-e29b-41d4-a716-446655440000",
+				},
+				engine,
+			);
 			expect(branch).toBe("then");
 		});
 
@@ -602,9 +680,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				then: { required: ["id"] },
 				else: { required: [] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				id: "not-a-uuid",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					id: "not-a-uuid",
+				},
+				engine,
+			);
 			expect(branch).toBe("else");
 		});
 
@@ -617,9 +699,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				},
 				then: { required: ["ip"] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				ip: "192.168.1.1",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					ip: "192.168.1.1",
+				},
+				engine,
+			);
 			expect(branch).toBe("then");
 		});
 
@@ -633,9 +719,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				then: { required: ["ip"] },
 				else: { required: [] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				ip: "not-an-ip",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					ip: "not-an-ip",
+				},
+				engine,
+			);
 			expect(branch).toBe("else");
 		});
 
@@ -649,9 +739,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				then: { required: ["x"] },
 				else: { required: [] },
 			};
-			const { branch } = checker.resolveConditions(schema, {
-				x: "anything",
-			});
+			const { branch } = resolveConditions(
+				schema,
+				{
+					x: "anything",
+				},
+				engine,
+			);
 			// Format inconnu → validateFormat retourne null → skip → then
 			expect(branch).toBe("then");
 		});
@@ -670,9 +764,13 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 			},
 			then: { required: ["email"] },
 		};
-		const { discriminant } = checker.resolveConditions(schema, {
-			email: "test@example.com",
-		});
+		const { discriminant } = resolveConditions(
+			schema,
+			{
+				email: "test@example.com",
+			},
+			engine,
+		);
 		expect(discriminant).toHaveProperty("email");
 		expect(discriminant.email).toBe("test@example.com");
 	});
@@ -702,15 +800,23 @@ describe("condition resolver — advanced evaluation", () => {
 			then: { required: ["vatId"] },
 		};
 
-		const frResult = checker.resolveConditions(schema, {
-			address: { country: "FR" },
-		});
+		const frResult = resolveConditions(
+			schema,
+			{
+				address: { country: "FR" },
+			},
+			engine,
+		);
 		expect(frResult.branch).toBe("then");
 		expect(frResult.resolved.required).toContain("vatId");
 
-		const usResult = checker.resolveConditions(schema, {
-			address: { country: "US" },
-		});
+		const usResult = resolveConditions(
+			schema,
+			{
+				address: { country: "US" },
+			},
+			engine,
+		);
 		expect(usResult.branch).toBe("else");
 	});
 
@@ -729,15 +835,23 @@ describe("condition resolver — advanced evaluation", () => {
 			then: { required: ["summary"] },
 		};
 
-		const manyItems = checker.resolveConditions(schema, {
-			items: [1, 2, 3, 4, 5],
-		});
+		const manyItems = resolveConditions(
+			schema,
+			{
+				items: [1, 2, 3, 4, 5],
+			},
+			engine,
+		);
 		expect(manyItems.branch).toBe("then");
 		expect(manyItems.resolved.required).toContain("summary");
 
-		const fewItems = checker.resolveConditions(schema, {
-			items: [1, 2],
-		});
+		const fewItems = resolveConditions(
+			schema,
+			{
+				items: [1, 2],
+			},
+			engine,
+		);
 		expect(fewItems.branch).toBe("else");
 	});
 
@@ -759,14 +873,22 @@ describe("condition resolver — advanced evaluation", () => {
 			},
 		};
 
-		const emailResult = checker.resolveConditions(schema, {
-			contact: "test@example.com",
-		});
+		const emailResult = resolveConditions(
+			schema,
+			{
+				contact: "test@example.com",
+			},
+			engine,
+		);
 		expect(emailResult.branch).toBe("then");
 
-		const nonEmailResult = checker.resolveConditions(schema, {
-			contact: "not-an-email",
-		});
+		const nonEmailResult = resolveConditions(
+			schema,
+			{
+				contact: "not-an-email",
+			},
+			engine,
+		);
 		expect(nonEmailResult.branch).toBe("else");
 	});
 
@@ -788,7 +910,7 @@ describe("condition resolver — advanced evaluation", () => {
 
 		// No data at all → mode is absent → properties check passes (absent = skip)
 		// But required is not set in if, so the condition passes
-		const result = checker.resolveConditions(schema, {});
+		const result = resolveConditions(schema, {}, engine);
 		expect(result.branch).toBe("then");
 	});
 
@@ -807,7 +929,7 @@ describe("condition resolver — advanced evaluation", () => {
 		};
 
 		// mode is absent → required check fails → else branch
-		const result = checker.resolveConditions(schema, {});
+		const result = resolveConditions(schema, {}, engine);
 		expect(result.branch).toBe("else");
 	});
 });

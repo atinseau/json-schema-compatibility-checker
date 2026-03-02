@@ -182,7 +182,7 @@ describe("edge cases", () => {
 			required: ["kind", "value"],
 		};
 
-		const result = checker.checkResolved(sub, sup, { kind: "text" });
+		const result = checker.check(sub, sup, { subData: { kind: "text" } });
 		expect(result.isSubset).toBe(
 			checker.isSubset(
 				result.resolvedSub.resolved,

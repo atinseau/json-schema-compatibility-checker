@@ -1,13 +1,16 @@
-export { JsonSchemaCompatibilityChecker } from "./json-schema-compatibility-checker";
-export { MergeEngine } from "./merge-engine";
+export { resolveConditions } from "./condition-resolver.ts";
+export { JsonSchemaCompatibilityChecker } from "./json-schema-compatibility-checker.ts";
+export { MergeEngine } from "./merge-engine.ts";
 export {
 	arePatternsEquivalent,
 	isPatternSubset,
 	isTrivialPattern,
-} from "./pattern-subset";
-export { formatSchemaType } from "./semantic-errors";
+} from "./pattern-subset.ts";
+export { formatSchemaType } from "./semantic-errors.ts";
 export type {
+	CheckConditionsOptions,
 	ResolvedConditionResult,
+	ResolvedSubsetResult,
 	SchemaError,
 	SubsetResult,
-} from "./types";
+} from "./types.ts";

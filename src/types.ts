@@ -20,6 +20,28 @@ export interface SubsetResult {
 	errors: SchemaError[];
 }
 
+/**
+ * Options pour résoudre les if/then/else avant un check de subset.
+ * Si `subData` est fourni, les conditions du sub sont résolues.
+ * Si `supData` est aussi fourni, il est utilisé pour résoudre le sup ;
+ * sinon `subData` est utilisé pour les deux.
+ */
+export interface CheckConditionsOptions {
+	/** Données discriminantes pour résoudre les conditions du sub schema */
+	subData: Record<string, unknown>;
+	/** Données discriminantes pour résoudre les conditions du sup schema (défaut: subData) */
+	supData?: Record<string, unknown>;
+}
+
+/**
+ * Résultat étendu de `check()` quand des options de conditions sont fournies.
+ * Inclut les résultats de résolution pour sub et sup en plus du SubsetResult.
+ */
+export interface ResolvedSubsetResult extends SubsetResult {
+	resolvedSub: ResolvedConditionResult;
+	resolvedSup: ResolvedConditionResult;
+}
+
 export interface ResolvedConditionResult {
 	/** Le schema avec les if/then/else résolus (aplatis) */
 	resolved: JSONSchema7;

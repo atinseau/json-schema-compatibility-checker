@@ -1,27 +1,29 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import { resolveConditions } from "./condition-resolver";
-import { formatResult } from "./formatter";
-import { MergeEngine } from "./merge-engine";
-import { normalize } from "./normalizer";
+import { resolveConditions } from "./condition-resolver.ts";
+import { formatResult } from "./formatter.ts";
+import { MergeEngine } from "./merge-engine.ts";
+import { normalize } from "./normalizer.ts";
 import {
 	arePatternsEquivalent,
 	isPatternSubset,
 	isTrivialPattern,
-} from "./pattern-subset";
-import type { BranchResult, BranchType } from "./subset-checker";
+} from "./pattern-subset.ts";
+import type { BranchResult, BranchType } from "./subset-checker.ts";
 import {
 	checkAtomic,
 	checkBranchedSub,
 	checkBranchedSup,
 	getBranchesTyped,
 	isAtomicSubsetOf,
-} from "./subset-checker";
+} from "./subset-checker.ts";
 import type {
+	CheckConditionsOptions,
 	ResolvedConditionResult,
+	ResolvedSubsetResult,
 	SchemaError,
 	SubsetResult,
-} from "./types";
-import { deepEqual } from "./utils";
+} from "./types.ts";
+import { deepEqual } from "./utils.ts";
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 
@@ -29,6 +31,8 @@ export type {
 	SchemaError,
 	SubsetResult,
 	ResolvedConditionResult,
+	ResolvedSubsetResult,
+	CheckConditionsOptions,
 	BranchType,
 	BranchResult,
 };
@@ -61,6 +65,7 @@ export {
 //
 // checker.isSubset(strict, loose);             // true
 // checker.check(loose, strict);                // { isSubset: false, diffs: [...] }
+// checker.check(sub, sup, { subData: {...} }); // resolves conditions then checks
 // ```
 
 export class JsonSchemaCompatibilityChecker {
@@ -119,48 +124,58 @@ export class JsonSchemaCompatibilityChecker {
 	 * Vérifie `sub ⊆ sup` et retourne un diagnostic complet
 	 * avec des erreurs sémantiques lisibles.
 	 *
-	 * Point 6 — Utilise `getBranchesTyped` pour distinguer `anyOf` de `oneOf`
-	 * dans les paths d'erreur.
+	 * Si `options` est fourni avec `subData`, les conditions `if/then/else`
+	 * des deux schemas sont résolues avant le check :
+	 * - `subData` est utilisé pour résoudre les conditions du sub
+	 * - `supData` (ou `subData` par défaut) est utilisé pour résoudre le sup
+	 *
+	 * @param sub - Le schema source (candidat subset)
+	 * @param sup - Le schema cible (superset attendu)
+	 * @param options - Options de résolution de conditions (optionnel)
+	 * @returns SubsetResult si pas d'options, ResolvedSubsetResult si options fournies
+	 *
+	 * @example
+	 * ```ts
+	 * // Sans résolution de conditions
+	 * checker.check(sub, sup);
+	 *
+	 * // Avec résolution de conditions (subData pour les deux)
+	 * checker.check(sub, sup, { subData: { kind: "text" } });
+	 *
+	 * // Avec résolution séparée pour sub et sup
+	 * checker.check(sub, sup, { subData: { kind: "text" }, supData: { kind: "other" } });
+	 * ```
 	 */
-	check(sub: JSONSchema7Definition, sup: JSONSchema7Definition): SubsetResult {
-		// ── Identity short-circuit ──
-		// Same reference → no errors, no merge needed.
-		if (sub === sup) {
-			return { isSubset: true, merged: sub, errors: [] };
+	check(
+		sub: JSONSchema7Definition,
+		sup: JSONSchema7Definition,
+		options: CheckConditionsOptions,
+	): ResolvedSubsetResult;
+	check(sub: JSONSchema7Definition, sup: JSONSchema7Definition): SubsetResult;
+	check(
+		sub: JSONSchema7Definition,
+		sup: JSONSchema7Definition,
+		options?: CheckConditionsOptions,
+	): SubsetResult | ResolvedSubsetResult {
+		// ── Condition resolution path ──
+		if (options) {
+			const resolvedSub = this.resolveConditions(
+				sub as JSONSchema7,
+				options.subData,
+			);
+			const resolvedSup = this.resolveConditions(
+				sup as JSONSchema7,
+				options.supData ?? options.subData,
+			);
+			const result = this.checkInternal(
+				resolvedSub.resolved,
+				resolvedSup.resolved,
+			);
+			return { ...result, resolvedSub, resolvedSup };
 		}
 
-		// ── Pre-normalize structural equality ──
-		// Avoids WeakMap overhead for identical schemas ({} ⊆ {}, etc.).
-		if (deepEqual(sub, sup)) {
-			return { isSubset: true, merged: sub, errors: [] };
-		}
-
-		const nSub = normalize(sub);
-		const nSup = normalize(sup);
-
-		// ── Post-normalize structural identity ──
-		// Catches semantically equivalent schemas after normalization.
-		if (deepEqual(nSub, nSup)) {
-			return { isSubset: true, merged: nSub, errors: [] };
-		}
-
-		const { branches: subBranches, type: subBranchType } =
-			getBranchesTyped(nSub);
-		const { branches: supBranches, type: supBranchType } =
-			getBranchesTyped(nSup);
-
-		// anyOf/oneOf dans sub
-		if (subBranches.length > 1 || subBranches[0] !== nSub) {
-			return checkBranchedSub(subBranches, nSup, this.engine, subBranchType);
-		}
-
-		// anyOf/oneOf dans sup uniquement
-		if (supBranches.length > 1 || supBranches[0] !== nSup) {
-			return checkBranchedSup(nSub, supBranches, this.engine, supBranchType);
-		}
-
-		// Cas standard
-		return checkAtomic(nSub, nSup, this.engine);
+		// ── Standard path (no condition resolution) ──
+		return this.checkInternal(sub, sup);
 	}
 
 	// ── Equality ───────────────────────────────────────────────────────────
@@ -204,43 +219,6 @@ export class JsonSchemaCompatibilityChecker {
 		return normalize(merged);
 	}
 
-	// ── Condition resolution ───────────────────────────────────────────────
-
-	/**
-	 * Résout les `if/then/else` d'un schema en évaluant le `if` contre
-	 * des données partielles (discriminants).
-	 */
-	resolveConditions(
-		schema: JSONSchema7,
-		data: Record<string, unknown>,
-	): ResolvedConditionResult {
-		return resolveConditions(schema, data, this.engine);
-	}
-
-	// ── Resolved check ────────────────────────────────────────────────────
-
-	/**
-	 * Raccourci : résout les conditions des deux schemas puis vérifie sub ⊆ sup.
-	 *
-	 * Utile quand le superset contient des if/then/else et que tu connais
-	 * les valeurs discriminantes que le subset va produire.
-	 */
-	checkResolved(
-		sub: JSONSchema7,
-		sup: JSONSchema7,
-		subData: Record<string, unknown>,
-		supData?: Record<string, unknown>,
-	): SubsetResult & {
-		resolvedSub: ResolvedConditionResult;
-		resolvedSup: ResolvedConditionResult;
-	} {
-		const resolvedSub = resolveConditions(sub, subData, this.engine);
-		const resolvedSup = resolveConditions(sup, supData ?? subData, this.engine);
-		const result = this.check(resolvedSub.resolved, resolvedSup.resolved);
-
-		return { ...result, resolvedSub, resolvedSup };
-	}
-
 	// ── Normalization ──────────────────────────────────────────────────────
 
 	/**
@@ -258,5 +236,67 @@ export class JsonSchemaCompatibilityChecker {
 	 */
 	formatResult(label: string, result: SubsetResult): string {
 		return formatResult(label, result);
+	}
+
+	// ── Private ────────────────────────────────────────────────────────────
+
+	/**
+	 * Résout les `if/then/else` d'un schema en évaluant le `if` contre
+	 * des données partielles (discriminants).
+	 */
+	private resolveConditions(
+		schema: JSONSchema7,
+		data: Record<string, unknown>,
+	): ResolvedConditionResult {
+		return resolveConditions(schema, data, this.engine);
+	}
+
+	/**
+	 * Logique interne de check sans résolution de conditions.
+	 * Factorise le pipeline normalize → branch → atomic pour éviter
+	 * la duplication entre les deux chemins de `check()`.
+	 */
+	private checkInternal(
+		sub: JSONSchema7Definition,
+		sup: JSONSchema7Definition,
+	): SubsetResult {
+		// ── Identity short-circuit ──
+		// Same reference → no errors, no merge needed.
+		if (sub === sup) {
+			return { isSubset: true, merged: sub, errors: [] };
+		}
+
+		// ── Pre-normalize structural equality ──
+		// Avoids WeakMap overhead for identical schemas ({} ⊆ {}, etc.).
+		if (deepEqual(sub, sup)) {
+			return { isSubset: true, merged: sub, errors: [] };
+		}
+
+		const nSub = normalize(sub);
+		const nSup = normalize(sup);
+
+		// ── Post-normalize structural identity ──
+		// Catches semantically equivalent schemas after normalization.
+		if (deepEqual(nSub, nSup)) {
+			return { isSubset: true, merged: nSub, errors: [] };
+		}
+
+		const { branches: subBranches, type: subBranchType } =
+			getBranchesTyped(nSub);
+		const { branches: supBranches, type: supBranchType } =
+			getBranchesTyped(nSup);
+
+		// anyOf/oneOf dans sub
+		if (subBranches.length > 1 || subBranches[0] !== nSub) {
+			return checkBranchedSub(subBranches, nSup, this.engine, subBranchType);
+		}
+
+		// anyOf/oneOf dans sup uniquement
+		if (supBranches.length > 1 || supBranches[0] !== nSup) {
+			return checkBranchedSup(nSub, supBranches, this.engine, supBranchType);
+		}
+
+		// Cas standard
+		return checkAtomic(nSub, nSup, this.engine);
 	}
 }

@@ -1,11 +1,17 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { JSONSchema7 } from "json-schema";
-import { JsonSchemaCompatibilityChecker } from "../../src";
+import {
+	JsonSchemaCompatibilityChecker,
+	MergeEngine,
+	resolveConditions,
+} from "../../src";
 
 let checker: JsonSchemaCompatibilityChecker;
+let engine: MergeEngine;
 
 beforeAll(() => {
 	checker = new JsonSchemaCompatibilityChecker();
+	engine = new MergeEngine();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -60,17 +66,25 @@ describe("Tests d'intégration globaux", () => {
 			},
 		};
 		// Email contact
-		const emailResult = checker.resolveConditions(schema, {
-			contactMethod: "email",
-			contactValue: "test@example.com",
-		});
+		const emailResult = resolveConditions(
+			schema,
+			{
+				contactMethod: "email",
+				contactValue: "test@example.com",
+			},
+			engine,
+		);
 		expect(emailResult.branch).toBe("then");
 
 		// Phone contact (ne matche pas allOf car contactMethod != "email")
-		const phoneResult = checker.resolveConditions(schema, {
-			contactMethod: "phone",
-			contactValue: "+33612345678",
-		});
+		const phoneResult = resolveConditions(
+			schema,
+			{
+				contactMethod: "phone",
+				contactValue: "+33612345678",
+			},
+			engine,
+		);
 		expect(phoneResult.branch).toBe("else");
 	});
 
@@ -108,10 +122,14 @@ describe("Tests d'intégration globaux", () => {
 			else: { required: [] },
 		};
 		// type != "skip" et value est un email → allOf([not(skip), format(email)]) = true → then
-		const { branch } = checker.resolveConditions(schema, {
-			type: "process",
-			value: "test@example.com",
-		});
+		const { branch } = resolveConditions(
+			schema,
+			{
+				type: "process",
+				value: "test@example.com",
+			},
+			engine,
+		);
 		expect(branch).toBe("then");
 	});
 
@@ -132,10 +150,14 @@ describe("Tests d'intégration globaux", () => {
 			else: { required: [] },
 		};
 		// type = "skip" → not matche → allOf échoue → else
-		const { branch } = checker.resolveConditions(schema, {
-			type: "skip",
-			value: "test@example.com",
-		});
+		const { branch } = resolveConditions(
+			schema,
+			{
+				type: "skip",
+				value: "test@example.com",
+			},
+			engine,
+		);
 		expect(branch).toBe("else");
 	});
 
