@@ -15,7 +15,7 @@ import type {
 } from "json-schema";
 
 import { isFormatSubset } from "./format-validator";
-import { deepEqual, hasOwn, isPlainObj } from "./utils";
+import { deepEqual, hasOwn, isPlainObj, unionStrings } from "./utils";
 
 // ─── Merge Engine ────────────────────────────────────────────────────────────
 //
@@ -560,4 +560,249 @@ export class MergeEngine {
 	isEqual(a: JSONSchema7Definition, b: JSONSchema7Definition): boolean {
 		return this.compareFn(a, b) === 0;
 	}
+
+	// ── Overlay (sequential spread) ────────────────────────────────────────
+
+	/**
+	 * Computes a **deep** schema overlay: properties from `override`
+	 * **replace** same-named properties in `base` using last-writer-wins
+	 * spread semantics. When both the base and override define the same
+	 * property as object-like schemas, the overlay **recurses** into that
+	 * property so that nested sub-properties are spread rather than
+	 * wholesale-replaced.
+	 *
+	 * This is the correct operation for sequential pipeline context
+	 * accumulation where each node overwrites keys it produces:
+	 *
+	 * ```ts
+	 * // Runtime semantics (deep spread):
+	 * context = deepSpread(context, node.output)
+	 * ```
+	 *
+	 * Unlike `merge` / `mergeOrThrow` (which compute `allOf` — the set
+	 * **intersection**), `overlay` is **non-commutative**: the order of
+	 * arguments matters. `base` is what existed before, `override` is
+	 * what the new node produces.
+	 *
+	 * Behavior per keyword:
+	 * - **`properties`**: deep spread — when both base and override define
+	 *   the same property and both are object-like, `overlay` recurses.
+	 *   Otherwise the override's property replaces the base's.
+	 *   Base-only properties are always kept.
+	 * - **`required`**: union of both arrays (a property that was required
+	 *   before or is required by the override stays required).
+	 * - **`additionalProperties`**: override wins if present, else base.
+	 * - **Other object-level keywords** (`minProperties`, `maxProperties`,
+	 *   `propertyNames`, `patternProperties`, `dependencies`): override
+	 *   wins if present, else base is kept.
+	 * - **Non-object schemas**: if either schema is not an object schema
+	 *   (no `properties`, no `type: "object"`), the override replaces
+	 *   the base entirely — there are no properties to spread.
+	 *
+	 * @param base - The existing accumulated schema (what came before)
+	 * @param override - The new schema to overlay on top (last writer)
+	 * @returns A new schema with deep spread semantics applied
+	 *
+	 * @example
+	 * ```ts
+	 * const base = {
+	 *   type: "object",
+	 *   properties: {
+	 *     accountId: { type: "string", enum: ["a", "b"] },
+	 *     config: {
+	 *       type: "object",
+	 *       properties: {
+	 *         host: { type: "string" },
+	 *         port: { type: "integer" },
+	 *       },
+	 *       required: ["host", "port"],
+	 *     },
+	 *   },
+	 *   required: ["accountId", "config"],
+	 * };
+	 *
+	 * const override = {
+	 *   type: "object",
+	 *   properties: {
+	 *     accountId: { type: "string" },  // widens the type
+	 *     config: {
+	 *       type: "object",
+	 *       properties: {
+	 *         host: { type: "string", format: "hostname" },
+	 *       },
+	 *     },
+	 *   },
+	 *   required: ["accountId"],
+	 * };
+	 *
+	 * engine.overlay(base, override);
+	 * // → {
+	 * //     type: "object",
+	 * //     properties: {
+	 * //       accountId: { type: "string" },          ← override wins (flat)
+	 * //       config: {
+	 * //         type: "object",
+	 * //         properties: {
+	 * //           host: { type: "string", format: "hostname" },  ← override wins (deep)
+	 * //           port: { type: "integer" },                     ← kept from base (deep)
+	 * //         },
+	 * //         required: ["host", "port"],
+	 * //       },
+	 * //     },
+	 * //     required: ["accountId", "config"],
+	 * //   }
+	 * ```
+	 */
+	overlay(
+		base: JSONSchema7Definition,
+		override: JSONSchema7Definition,
+	): JSONSchema7Definition {
+		// ── Boolean schema fast paths ──
+		// `false` absorbs everything (no values allowed)
+		if (override === false) return false;
+		// `true` (accept everything) as override means base is completely replaced
+		if (override === true) return true;
+		// `true`/`false` base with a real override → override wins entirely
+		if (typeof base === "boolean") return override;
+
+		const baseObj = base as JSONSchema7;
+		const overrideObj = override as JSONSchema7;
+
+		// ── Non-object schemas: override replaces entirely ──
+		// If neither schema looks like an object schema, there's no
+		// property-level spreading to do — the override simply wins.
+		if (!isObjectLike(baseObj) && !isObjectLike(overrideObj)) {
+			return override;
+		}
+
+		// ── If only the override is object-like, it replaces entirely ──
+		if (!isObjectLike(baseObj)) {
+			return override;
+		}
+
+		// ── If only the base is object-like, override replaces entirely ──
+		// (the override is a non-object schema — it redefines the shape)
+		if (!isObjectLike(overrideObj)) {
+			return override;
+		}
+
+		// ── Both are object-like: deep spread properties ──
+		const baseProps = (baseObj.properties ?? {}) as Record<
+			string,
+			JSONSchema7Definition
+		>;
+		const overrideProps = (overrideObj.properties ?? {}) as Record<
+			string,
+			JSONSchema7Definition
+		>;
+
+		// Deep spread: for each property, recurse if both sides are object-like,
+		// otherwise override wins. Base-only properties are kept as-is.
+		const mergedProps: Record<string, JSONSchema7Definition> = {};
+
+		// 1. Copy all base properties (may be overridden below)
+		for (const key of Object.keys(baseProps)) {
+			const baseProp = baseProps[key];
+			if (baseProp === undefined) continue;
+			mergedProps[key] = baseProp;
+		}
+
+		// 2. Apply override properties — recurse when both are object-like
+		for (const key of Object.keys(overrideProps)) {
+			const overrideProp = overrideProps[key];
+			if (overrideProp === undefined) continue;
+
+			const baseProp = baseProps[key];
+
+			// If this property exists in both and both are object-like schemas,
+			// recurse to deep-spread their sub-properties.
+			if (
+				baseProp !== undefined &&
+				typeof baseProp !== "boolean" &&
+				typeof overrideProp !== "boolean" &&
+				isObjectLike(baseProp as JSONSchema7) &&
+				isObjectLike(overrideProp as JSONSchema7)
+			) {
+				mergedProps[key] = this.overlay(baseProp, overrideProp);
+			} else {
+				// Otherwise: override wins entirely (primitive, array, type change, etc.)
+				mergedProps[key] = overrideProp;
+			}
+		}
+
+		// Union of required arrays
+		const baseRequired = Array.isArray(baseObj.required)
+			? baseObj.required
+			: [];
+		const overrideRequired = Array.isArray(overrideObj.required)
+			? overrideObj.required
+			: [];
+		const mergedRequired = unionStrings(baseRequired, overrideRequired);
+
+		// Start from base, apply override's object-level keywords on top
+		const result: JSONSchema7 = { ...baseObj };
+
+		// Always set the merged properties
+		result.properties = mergedProps;
+
+		// Set required only if non-empty
+		if (mergedRequired.length > 0) {
+			result.required = mergedRequired;
+		} else {
+			delete result.required;
+		}
+
+		// Override-wins for object-level constraint keywords
+		if (hasOwn(overrideObj, "additionalProperties")) {
+			result.additionalProperties = overrideObj.additionalProperties;
+		}
+		if (hasOwn(overrideObj, "minProperties")) {
+			result.minProperties = overrideObj.minProperties;
+		}
+		if (hasOwn(overrideObj, "maxProperties")) {
+			result.maxProperties = overrideObj.maxProperties;
+		}
+		if (hasOwn(overrideObj, "propertyNames")) {
+			result.propertyNames = overrideObj.propertyNames;
+		}
+		if (hasOwn(overrideObj, "patternProperties")) {
+			result.patternProperties = overrideObj.patternProperties;
+		}
+		if (hasOwn(overrideObj, "dependencies")) {
+			result.dependencies = overrideObj.dependencies;
+		}
+
+		// Override type if explicitly provided
+		if (hasOwn(overrideObj, "type")) {
+			result.type = overrideObj.type;
+		}
+
+		return result;
+	}
+}
+
+// ─── Overlay helpers ─────────────────────────────────────────────────────────
+
+/** Object-level keywords that indicate a schema describes an object shape. */
+const OBJECT_SHAPE_KEYWORDS: ReadonlyArray<string> = [
+	"properties",
+	"patternProperties",
+	"additionalProperties",
+	"required",
+	"dependencies",
+	"propertyNames",
+	"minProperties",
+	"maxProperties",
+];
+
+/**
+ * Heuristic: does this schema look like it describes an object?
+ * True if `type` is `"object"` or if any object-shape keyword is present.
+ */
+function isObjectLike(schema: JSONSchema7): boolean {
+	if (schema.type === "object") return true;
+	for (const kw of OBJECT_SHAPE_KEYWORDS) {
+		if (hasOwn(schema, kw)) return true;
+	}
+	return false;
 }

@@ -1,6 +1,28 @@
 # API Reference
 
-Toutes les méthodes sont exposées par la classe `JsonSchemaCompatibilityChecker`.
+## Sommaire
+
+- [`JsonSchemaCompatibilityChecker`](#jsonschemacompatibilitychecker) — Vérification de compatibilité entre schemas
+  - [`isSubset(sub, sup)`](#issubsetsub-sup)
+  - [`check(sub, sup)`](#checksub-sup)
+  - [`isEqual(a, b)`](#isequala-b)
+  - [`intersect(a, b)`](#intersecta-b)
+  - [`resolveConditions(schema, data)`](#resolveconditionsschema-data)
+  - [`check(sub, sup, options)`](#checksub-sup-options)
+  - [`normalize(schema)`](#normalizeschema)
+  - [`formatResult(label, result)`](#formatresultlabel-result)
+- [`MergeEngine`](#mergeengine) — Opérations bas-niveau sur les schemas
+  - [`merge(a, b)`](#mergea-b)
+  - [`mergeOrThrow(a, b)`](#mergeorthrowa-b)
+  - [`overlay(base, override)`](#overlaybase-override)
+  - [`compare(a, b)`](#comparea-b)
+  - [`isEqual(a, b)`](#isequala-b-1) (MergeEngine)
+
+---
+
+# `JsonSchemaCompatibilityChecker`
+
+Toutes les méthodes de vérification de compatibilité sont exposées par la classe `JsonSchemaCompatibilityChecker`.
 
 ```ts
 import { JsonSchemaCompatibilityChecker } from "json-schema-compatibility-checker";
@@ -506,3 +528,392 @@ Format de sortie :
 - `✅` — le check a réussi (`isSubset: true`)
 - `❌` — le check a échoué (`isSubset: false`), suivi de la liste des erreurs
 - `✗ key: expected X, received Y` — détail de chaque erreur sémantique
+
+---
+
+# `MergeEngine`
+
+Opérations bas-niveau sur les schemas : **intersection** (`allOf` merge) et **overlay** (deep spread séquentiel).
+
+```ts
+import { MergeEngine } from "json-schema-compatibility-checker";
+
+const engine = new MergeEngine();
+```
+
+`MergeEngine` expose deux opérations de combinaison de schemas aux sémantiques fondamentalement différentes :
+
+| | `merge` / `mergeOrThrow` | `overlay` |
+|---|---|---|
+| **Sémantique** | `allOf(A, B)` — **intersection** ensembliste | `{ ...base, ...override }` — **deep spread** |
+| **Commutative ?** | ✅ Oui — `merge(A, B) ≡ merge(B, A)` | ❌ Non — l'ordre compte (last writer wins) |
+| **Conflit de propriétés** | Garde la contrainte la plus **restrictive** | Garde le **dernier écrivain** |
+| **Objets imbriqués** | Intersectés récursivement (`allOf`) | Deep-spread récursivement (`overlay`) |
+| **Cas d'usage** | Subset checking (`A ⊆ B ⟺ A ∩ B ≡ A`), convergence de branches parallèles | Accumulation de contexte dans un pipeline séquentiel |
+
+---
+
+## `merge(a, b)`
+
+```ts
+merge(
+  a: JSONSchema7Definition,
+  b: JSONSchema7Definition
+): JSONSchema7Definition | null
+```
+
+Calcule l'**intersection** de deux schemas via `allOf([a, b])`. Retourne `null` si les schemas sont incompatibles.
+
+Effectue des pré-checks avant le merge :
+- Conflits de `const` / `enum` (profond)
+- Conflits de `format` (hiérarchie)
+- Conflits `additionalProperties` vs propriétés requises
+
+```ts
+// Intersection de contraintes numériques
+engine.merge(
+  { type: "number", minimum: 5 },
+  { type: "number", maximum: 10 }
+);
+// → { type: "number", minimum: 5, maximum: 10 }
+
+// Intersection d'enums
+engine.merge(
+  { type: "string", enum: ["a", "b", "c"] },
+  { type: "string", enum: ["b", "c", "d"] }
+);
+// → { type: "string", enum: ["b", "c"] }
+
+// Types incompatibles → null
+engine.merge({ type: "string" }, { type: "number" });
+// → null
+```
+
+### Propriétés d'objets
+
+Le merge combine les propriétés des deux schemas (union des clés) et intersecte les propriétés communes :
+
+```ts
+engine.merge(
+  {
+    type: "object",
+    properties: { a: { type: "string" } },
+    required: ["a"],
+  },
+  {
+    type: "object",
+    properties: { b: { type: "number" } },
+    required: ["b"],
+  }
+);
+// → {
+//     type: "object",
+//     properties: { a: { type: "string" }, b: { type: "number" } },
+//     required: ["a", "b"]
+//   }
+```
+
+### Conflits détectés
+
+```ts
+// const vs const incompatibles
+engine.merge({ const: "hello" }, { const: "world" });
+// → null
+
+// const pas dans l'enum
+engine.merge({ const: "x" }, { enum: ["a", "b", "c"] });
+// → null
+
+// Formats incompatibles
+engine.merge(
+  { type: "string", format: "email" },
+  { type: "string", format: "ipv4" }
+);
+// → null
+```
+
+---
+
+## `mergeOrThrow(a, b)`
+
+```ts
+mergeOrThrow(
+  a: JSONSchema7Definition,
+  b: JSONSchema7Definition
+): JSONSchema7Definition
+```
+
+Identique à `merge`, mais **lève une exception** au lieu de retourner `null` en cas d'incompatibilité. Utile quand on veut capturer l'erreur pour le diagnostic.
+
+```ts
+try {
+  const result = engine.mergeOrThrow(
+    { const: "hello" },
+    { const: "world" }
+  );
+} catch (e) {
+  console.log(e.message);
+  // "Incompatible const values: schemas have conflicting const constraints"
+}
+```
+
+Les messages d'erreur possibles :
+- `"Incompatible const values: schemas have conflicting const constraints"`
+- `"Incompatible format values: schemas have conflicting format constraints"`
+- `"Incompatible additionalProperties: required properties conflict with additionalProperties constraint"`
+
+---
+
+## `overlay(base, override)`
+
+```ts
+overlay(
+  base: JSONSchema7Definition,
+  override: JSONSchema7Definition
+): JSONSchema7Definition
+```
+
+Calcule un **deep spread** de schemas : les propriétés de `override` **remplacent** celles de même nom dans `base` (last-writer-wins). Quand les deux définissent la même propriété comme schema d'objet, `overlay` **recurse** pour deep-spreader les sous-propriétés.
+
+C'est l'opération correcte pour l'**accumulation de contexte dans un pipeline séquentiel** où chaque nœud écrase les clés qu'il produit :
+
+```ts
+// Sémantique runtime :
+context = deepSpread(context, node.output)
+```
+
+### ⚠️ Différence fondamentale avec `merge`
+
+`merge` (intersection) est **commutative** et garde la contrainte la plus restrictive.
+`overlay` est **non-commutative** et garde le dernier écrivain.
+
+```ts
+const schemaA = {
+  type: "object",
+  properties: { value: { type: "string", enum: ["x", "y"] } },
+};
+const schemaB = {
+  type: "object",
+  properties: { value: { type: "string" } },
+};
+
+// merge : garde l'enum (plus restrictif)
+engine.merge(schemaA, schemaB);
+// → { ..., properties: { value: { type: "string", enum: ["x", "y"] } } }
+
+// overlay : le dernier (schemaB) gagne → pas d'enum
+engine.overlay(schemaA, schemaB);
+// → { ..., properties: { value: { type: "string" } } }
+
+// overlay est non-commutative :
+engine.overlay(schemaB, schemaA);
+// → { ..., properties: { value: { type: "string", enum: ["x", "y"] } } }
+```
+
+### Comportement par mot-clé
+
+| Mot-clé | Comportement |
+|---|---|
+| `properties` | **Deep spread** — recurse si les deux côtés sont des objets, sinon override remplace. Les propriétés base-only sont conservées. |
+| `required` | **Union** des deux tableaux (dédupliquée) |
+| `additionalProperties` | Override wins si présent, sinon base conservé |
+| `minProperties`, `maxProperties` | Override wins si présent |
+| `propertyNames` | Override wins si présent |
+| `patternProperties` | Override wins si présent |
+| `dependencies` | Override wins si présent |
+| `type` | Override wins si explicitement défini |
+
+### Exemple — Spread plat (propriétés de premier niveau)
+
+```ts
+const base = {
+  type: "object",
+  properties: {
+    name: { type: "string", minLength: 1 },
+    status: { type: "string", enum: ["active", "inactive"] },
+  },
+  required: ["name", "status"],
+};
+
+const override = {
+  type: "object",
+  properties: {
+    status: { type: "string" },           // élargit (supprime l'enum)
+    email: { type: "string", format: "email" }, // ajoute une nouvelle propriété
+  },
+  required: ["status", "email"],
+};
+
+engine.overlay(base, override);
+// → {
+//     type: "object",
+//     properties: {
+//       name: { type: "string", minLength: 1 },  ← conservé de base
+//       status: { type: "string" },                ← override gagne
+//       email: { type: "string", format: "email" },← ajouté par override
+//     },
+//     required: ["name", "status", "email"],       ← union
+//   }
+```
+
+### Exemple — Deep spread (objets imbriqués)
+
+Quand les deux schemas définissent la même propriété comme objet, `overlay` recurse :
+
+```ts
+const base = {
+  type: "object",
+  properties: {
+    config: {
+      type: "object",
+      properties: {
+        host: { type: "string" },
+        port: { type: "integer" },
+      },
+      required: ["host", "port"],
+    },
+  },
+};
+
+const override = {
+  type: "object",
+  properties: {
+    config: {
+      type: "object",
+      properties: {
+        host: { type: "string", format: "hostname" }, // affine le type
+        // port absent → conservé de base via deep spread
+      },
+    },
+  },
+};
+
+engine.overlay(base, override);
+// → {
+//     type: "object",
+//     properties: {
+//       config: {
+//         type: "object",
+//         properties: {
+//           host: { type: "string", format: "hostname" },  ← override gagne
+//           port: { type: "integer" },                      ← conservé de base
+//         },
+//         required: ["host", "port"],                       ← union
+//       },
+//     },
+//   }
+```
+
+### Exemple — Pipeline séquentiel avec `reduce`
+
+```ts
+const node1 = {
+  type: "object",
+  properties: {
+    metadata: {
+      type: "object",
+      properties: { createdBy: { type: "string" } },
+      required: ["createdBy"],
+    },
+  },
+  required: ["metadata"],
+};
+
+const node2 = {
+  type: "object",
+  properties: {
+    metadata: {
+      type: "object",
+      properties: { updatedAt: { type: "string", format: "date-time" } },
+      required: ["updatedAt"],
+    },
+  },
+};
+
+const node3 = {
+  type: "object",
+  properties: {
+    metadata: {
+      type: "object",
+      properties: { createdBy: { type: "string", enum: ["system"] } },
+    },
+    status: { type: "string" },
+  },
+  required: ["status"],
+};
+
+// Accumulation séquentielle :
+const context = [node1, node2, node3].reduce((acc, output) =>
+  engine.overlay(acc, output)
+);
+// → {
+//     metadata: {
+//       createdBy: { type: "string", enum: ["system"] },  ← restreint par node3
+//       updatedAt: { type: "string", format: "date-time" },← ajouté par node2
+//     },
+//     status: { type: "string" },                          ← ajouté par node3
+//     required: ["metadata", "status"],
+//   }
+```
+
+### Schemas non-objet
+
+Si l'un des schemas n'est pas un objet (pas de `properties`, pas `type: "object"`), l'override remplace entièrement :
+
+```ts
+// string → integer : override remplace
+engine.overlay({ type: "string" }, { type: "integer", minimum: 0 });
+// → { type: "integer", minimum: 0 }
+
+// objet → string : override remplace
+engine.overlay(
+  { type: "object", properties: { a: { type: "string" } } },
+  { type: "string" }
+);
+// → { type: "string" }
+```
+
+### Schemas booléens
+
+```ts
+engine.overlay(base, false);  // → false (rien n'est valide)
+engine.overlay(base, true);   // → true (tout est valide)
+engine.overlay(false, schema); // → schema (override gagne)
+engine.overlay(true, schema);  // → schema (override gagne)
+```
+
+---
+
+## `compare(a, b)`
+
+```ts
+compare(
+  a: JSONSchema7Definition,
+  b: JSONSchema7Definition
+): number
+```
+
+Comparaison structurelle de deux schema definitions. Retourne `0` si identiques, un entier non-nul sinon.
+
+```ts
+engine.compare({ type: "string" }, { type: "string" }); // 0
+engine.compare({ type: "string" }, { type: "number" }); // non-zéro
+```
+
+---
+
+## `isEqual(a, b)` {#isequala-b-1}
+
+```ts
+isEqual(
+  a: JSONSchema7Definition,
+  b: JSONSchema7Definition
+): boolean
+```
+
+Vérifie l'**égalité structurelle** entre deux schema definitions. Wrapper typé autour de `compare`.
+
+```ts
+engine.isEqual({ type: "string" }, { type: "string" }); // true
+engine.isEqual({ type: "string" }, { type: "number" }); // false
+```
