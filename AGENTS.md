@@ -59,7 +59,7 @@ src/
 ├── index.ts                          # Public re-exports (entry point)
 ├── json-schema-compatibility-checker.ts  # Main facade class (JsonSchemaCompatibilityChecker)
 ├── types.ts                          # Public interfaces: SubsetResult, SchemaError, ResolvedConditionResult
-├── merge-engine.ts                   # MergeEngine: allOf merge + conflict detection (wraps @x0k/json-schema-merge)
+├── merge-engine.ts                   # MergeEngine: allOf merge (intersection) + overlay (deep spread) + conflict detection (wraps @x0k/json-schema-merge)
 ├── subset-checker.ts                 # Core subset logic: isAtomicSubsetOf, evaluateNot, getBranchesTyped, checkAtomic/Branched
 ├── normalizer.ts                     # Schema normalizer: infer type from const/enum, double-negation resolution, recursive normalization
 ├── condition-resolver.ts             # if/then/else resolution with discriminant data, allOf condition handling
@@ -74,7 +74,7 @@ tests/
 ├── core/           # Tests for main API methods: isSubset, check, check-connection, intersect, isEqual, normalize, semantic-errors, edge-cases
 ├── features/       # Tests per JSON Schema feature: type-system, const-enum, not, pattern, format, anyOf/oneOf, object-properties, data-narrowing, contains-items, dependencies, property-names
 ├── conditions/     # Tests for if/then/else resolution, evaluateCondition, resolve-conditions
-├── merge-engine/   # Tests for the merge engine: types, keywords, enum-const, advanced merges
+├── merge-engine/   # Tests for the merge engine: types, keywords, enum-const, advanced merges, overlay (deep spread)
 ├── bugs/           # Regression tests for specific bug fixes
 ├── integration/    # Import tests (ESM + CJS) and end-to-end integration
 └── audit/          # Tests for unsupported features ($ref) and edge detection
@@ -102,14 +102,40 @@ sub, sup, options → resolveConditions(sub, subData)
                   → checkInternal(narrowedSub, resolvedSup)
 ```
 
+### MergeEngine: Two Operations, Two Semantics
+
+`MergeEngine` exposes two fundamentally different schema-combining operations:
+
+| | `merge` / `mergeOrThrow` | `overlay` |
+|---|---|---|
+| **Semantics** | `allOf(A, B)` — set **intersection** | `{ ...base, ...override }` — deep **spread** |
+| **Commutative?** | ✅ Yes — `merge(A, B) ≡ merge(B, A)` | ❌ No — order matters (last writer wins) |
+| **Property conflict** | Keeps the **narrowest** constraint | Keeps the **last writer** |
+| **Nested objects** | Intersected recursively (`allOf`) | Deep-spread recursively (`overlay`) |
+| **Use case** | Subset checking (`A ⊆ B ⟺ A ∩ B ≡ A`), parallel branch convergence | Sequential pipeline context accumulation |
+
+**`merge(a, b)` / `mergeOrThrow(a, b)`** — Computes `allOf([a, b])`. Returns the schema that satisfies **both** inputs simultaneously. Used internally by the subset checker. Correct for parallel branches converging (the guaranteed type is the intersection).
+
+**`overlay(base, override)`** — Deep spread with last-writer-wins per property. When both base and override define the same property as object-like schemas, `overlay` **recurses** into that property (deep spread). Otherwise the override replaces entirely. `required` arrays are unioned. Object-level keywords (`additionalProperties`, `minProperties`, etc.) use override-wins-if-present semantics. Correct for sequential pipelines where each node overwrites context keys:
+
+```ts
+// Sequential pipeline accumulation:
+const context = nodeOutputs.reduce((acc, output) =>
+  engine.overlay(acc, output), initialSchema);
+
+// Parallel branch convergence:
+const converged = engine.merge(pathAContext, pathBContext);
+```
+
 ### Key Design Decisions — Follow These
 
-1. **Immutability via copy-on-write.** The normalizer uses `ensureCopy()` — never mutate input schemas directly. All functions should treat schemas as immutable.
+1. **Immutability via copy-on-write.** The normalizer uses `ensureCopy()` — never mutate input schemas directly. All functions should treat schemas as immutable. `overlay` returns new objects and never mutates its inputs.
 2. **WeakMap caching.** `normalizeCache` in `normalizer.ts` caches results per object reference. Do NOT break this by creating unnecessary copies of schemas before normalizing.
 3. **Lazy early-exit patterns.** Every function uses short-circuit returns (identity checks, `deepEqual` before expensive operations). Preserve this pattern.
 4. **Ternary results for uncertain operations.** `isPatternSubset()` and `isFormatSubset()` return `true | false | null`. `null` means "cannot determine" — never treat it as `false`.
 5. **No `$ref` support.** The library does NOT resolve `$ref`. Do not attempt to add `$ref` resolution without explicit instruction.
 6. **Facade pattern.** `JsonSchemaCompatibilityChecker` is a thin orchestrator. Core logic lives in the sub-modules. Add new logic to the appropriate sub-module, not to the facade.
+7. **Intersection ≠ Overlay.** Do NOT use `merge`/`mergeOrThrow` for sequential context accumulation — it silently swallows widening overrides (intersection keeps the narrowest). Use `overlay` instead. Do NOT use `overlay` for subset checking — it has no set-theoretic meaning.
 
 ## Code Conventions
 
@@ -196,6 +222,7 @@ describe("featureName", () => {
 - **Regex patterns**: Probabilistic sampling (200 samples), not formal proof.
 - **`$ref`**: Not supported. Schemas must be pre-dereferenced.
 - **`patternProperties`**: Partial support only.
+- **`overlay` is property-level only**: `overlay` deep-spreads `properties` of object schemas recursively. It does NOT deep-spread `patternProperties`, `dependencies` (schema form), or `items` — those use override-wins at the keyword level. This matches runtime spread semantics where only named properties are merged key-by-key.
 
 ## Trust These Instructions
 

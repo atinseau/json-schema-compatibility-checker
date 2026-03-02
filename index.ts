@@ -1,7 +1,7 @@
 import type { JSONSchema7 } from "json-schema";
-import { JsonSchemaCompatibilityChecker } from "./src";
+import { MergeEngine } from "./src";
 
-const checker = new JsonSchemaCompatibilityChecker();
+const engine = new MergeEngine();
 
 const schema1: JSONSchema7 = {
 	type: "string",
@@ -12,7 +12,6 @@ const schema2: JSONSchema7 = {
 	type: "string",
 };
 
-const result = checker.check(schema2, schema1, {
-	subData: {},
-});
-console.log(result);
+const m1 = engine.mergeOrThrow(schema1, schema2);
+
+console.log(m1);

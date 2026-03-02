@@ -1,6 +1,6 @@
 # Architecture interne
 
-La librairie est organisée en modules spécialisés, orchestrés par la façade `JsonSchemaCompatibilityChecker` :
+La librairie est organisée en modules spécialisés, orchestrés par la façade `JsonSchemaCompatibilityChecker` et le `MergeEngine` :
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -20,29 +20,34 @@ La librairie est organisée en modules spécialisés, orchestrés par la façade
 │  ┌──────────────┐  ┌──────────────────────────┐  │
 │  │ Merge Engine  │  │    Subset Checker         │  │
 │  │              │  │                          │  │
-│  │ - allOf merge│  │ - Atomic: A∩B ≡ A ?     │  │
-│  │ - Conflict   │  │ - Branched sub (anyOf)   │  │
-│  │   detection  │  │ - Branched sup (anyOf)   │  │
-│  │ - Compare    │  │ - evaluateNot            │  │
-│  └──────────────┘  │ - stripNotFromSup        │  │
-│                     │ - stripPatternFromSup    │  │
-│  ┌──────────────┐  └──────────────────────────┘  │
-│  │Semantic Errors│                               │
-│  │              │  ┌──────────────────────────┐  │
-│  │-computeErrors│  │    Pattern Subset         │  │
-│  │ - Recurse    │  │                          │  │
-│  │ - Properties │  │ - isPatternSubset        │  │
-│  └──────────────┘  │ - arePatternsEquivalent  │  │
-│                     │ - isTrivialPattern       │  │
-│  ┌──────────────┐  └──────────────────────────┘  │
-│  │  Formatter    │                               │
-│  │              │  ┌──────────────────────────┐  │
-│  │ - formatResult│  │    Format Validator       │  │
-│  │ - Error lines│  │                          │  │
-│  └──────────────┘  │ - validateFormat         │  │
-│                     │ - isFormatSubset         │  │
-│  ┌──────────────┐  │ - Format hierarchy       │  │
-│  │Data Narrowing │  └──────────────────────────┘  │
+│  │ - merge /    │  │ - Atomic: A∩B ≡ A ?     │  │
+│  │   mergeOrThrow│  │ - Branched sub (anyOf)   │  │
+│  │   (allOf ∩)  │  │ - Branched sup (anyOf)   │  │
+│  │ - overlay    │  │ - evaluateNot            │  │
+│  │   (deep spread│  │ - stripNotFromSup        │  │
+│  │    last wins) │  │ - stripPatternFromSup    │  │
+│  │ - Conflict   │  └──────────────────────────┘  │
+│  │   detection  │                                │
+│  │ - Compare    │  ┌──────────────────────────┐  │
+│  └──────────────┘  │    Pattern Subset         │  │
+│                     │                          │  │
+│  ┌──────────────┐  │ - isPatternSubset        │  │
+│  │Semantic Errors│  │ - arePatternsEquivalent  │  │
+│  │              │  │ - isTrivialPattern       │  │
+│  │-computeErrors│  └──────────────────────────┘  │
+│  │ - Recurse    │                                │
+│  │ - Properties │  ┌──────────────────────────┐  │
+│  └──────────────┘  │    Format Validator       │  │
+│                     │                          │  │
+│  ┌──────────────┐  │ - validateFormat         │  │
+│  │  Formatter    │  │ - isFormatSubset         │  │
+│  │              │  │ - Format hierarchy       │  │
+│  │ - formatResult│  └──────────────────────────┘  │
+│  │ - Error lines│                                │
+│  └──────────────┘                                │
+│                                                  │
+│  ┌──────────────┐                                │
+│  │Data Narrowing │                               │
 │  │              │                                │
 │  │-narrowSchema │                                │
 │  │ WithData     │                                │
@@ -50,6 +55,38 @@ La librairie est organisée en modules spécialisés, orchestrés par la façade
 │  │ - Recurse    │                                │
 │  └──────────────┘                                │
 └──────────────────────────────────────────────────┘
+```
+
+---
+
+## MergeEngine : deux opérations, deux sémantiques
+
+Le `MergeEngine` expose deux opérations fondamentalement différentes pour combiner des schemas :
+
+```
+merge(A, B)  =  allOf([A, B])     Intersection ensembliste (commutative)
+                                   → garde la contrainte la plus restrictive
+                                   → utilisé en interne par le subset checker
+
+overlay(base, override)            Deep spread séquentiel (NON commutative)
+                                   → last writer wins par propriété
+                                   → recurse dans les objets imbriqués
+                                   → utilisé pour accumuler du contexte
+```
+
+### Quand utiliser quoi ?
+
+```
+Pipeline séquentiel (Node1 → Node2 → Node3) :
+  context = overlay(overlay(node1.output, node2.output), node3.output)
+
+Convergence de branches parallèles :
+       ┌── Path A ──┐
+  Start                 Merge ──→ merge(contextA, contextB)
+       └── Path B ──┘
+
+Vérification de compatibilité :
+  sub ⊆ sup  ⟺  merge(sub, sup) ≡ sub
 ```
 
 ---
@@ -68,6 +105,22 @@ La librairie est organisée en modules spécialisés, orchestrés par la façade
    f. engine.isEqual(normalized_sub, normalized_merged) ?
       → true: sub ⊆ sup ✅
       → false: compute diffs, sub ⊄ sup ❌
+```
+
+---
+
+## Flux de `overlay(base, override)`
+
+```
+1. Boolean fast paths (false/true)
+2. If either schema is not object-like → override replaces entirely
+3. Both object-like:
+   a. For each property in base: copy to result
+   b. For each property in override:
+      - If exists in base AND both are object-like → recurse overlay()
+      - Otherwise → override replaces
+   c. required = union(base.required, override.required)
+   d. Object-level keywords: override wins if present, else base kept
 ```
 
 ---

@@ -35,7 +35,8 @@ Cette librairie répond à cette question en vérifiant si un schema est un **so
 
 - ✅ Vérifie si un schema est un sous-ensemble d'un autre (`sub ⊆ sup`)
 - ✅ Produit un diagnostic détaillé avec les différences structurelles
-- ✅ Calcule l'intersection de deux schemas
+- ✅ Calcule l'intersection de deux schemas (`allOf` merge)
+- ✅ Accumule des schemas séquentiellement via deep spread (`overlay`)
 - ✅ Résout les conditions `if/then/else` avec des données discriminantes
 - ✅ Gère `anyOf`, `oneOf`, `not`, `format`, `pattern`, `dependencies`, etc.
 - ✅ Compare des patterns regex par échantillonnage
@@ -116,7 +117,9 @@ console.log(checker.isSubset(loose, strict)); // false ❌
 
 ## API Reference
 
-Toutes les méthodes sont exposées par la classe `JsonSchemaCompatibilityChecker`.
+### `JsonSchemaCompatibilityChecker`
+
+Toutes les méthodes de vérification de compatibilité sont exposées par la classe `JsonSchemaCompatibilityChecker`.
 
 ```ts
 const checker = new JsonSchemaCompatibilityChecker();
@@ -132,6 +135,24 @@ const checker = new JsonSchemaCompatibilityChecker();
 | `resolveConditions(schema, data)` | Résout les `if/then/else` avec des données | `ResolvedConditionResult` |
 | `normalize(schema)` | Normalise un schema (infère types, résout double négation) | `JSONSchema7Definition` |
 | `formatResult(label, result)` | Formate un résultat pour le debug | `string` |
+
+### `MergeEngine`
+
+Opérations bas-niveau sur les schemas : intersection (`allOf` merge) et overlay (deep spread séquentiel).
+
+```ts
+import { MergeEngine } from "json-schema-compatibility-checker";
+
+const engine = new MergeEngine();
+```
+
+| Méthode | Description | Retour |
+|---|---|---|
+| `merge(a, b)` | Intersection `allOf([a, b])` — retourne `null` si incompatible | `JSONSchema7Definition \| null` |
+| `mergeOrThrow(a, b)` | Comme `merge`, mais lève une exception si incompatible | `JSONSchema7Definition` |
+| `overlay(base, override)` | Deep spread séquentiel — last writer wins par propriété | `JSONSchema7Definition` |
+| `compare(a, b)` | Comparaison structurelle (0 = identique) | `number` |
+| `isEqual(a, b)` | Égalité structurelle | `boolean` |
 
 **Exemple rapide — `check` avec diagnostic :**
 
@@ -156,6 +177,36 @@ console.log(result.isSubset);          // true ✅
 console.log(result.resolvedSup.branch); // "then"
 ```
 
+**Exemple rapide — `overlay` pour accumulation séquentielle :**
+
+```ts
+import { MergeEngine } from "json-schema-compatibility-checker";
+
+const engine = new MergeEngine();
+
+// Node1 produit accountId avec enum
+const node1Output = {
+  type: "object",
+  properties: { accountId: { type: "string", enum: ["a", "b"] } },
+  required: ["accountId"],
+};
+
+// Node2 redéfinit accountId en string simple (plus large)
+const node2Output = {
+  type: "object",
+  properties: { accountId: { type: "string" } },
+  required: ["accountId"],
+};
+
+// ❌ merge (intersection) : garde l'enum — FAUX pour un pipeline séquentiel
+engine.merge(node1Output, node2Output);
+// → { ..., properties: { accountId: { type: "string", enum: ["a", "b"] } } }
+
+// ✅ overlay (deep spread) : le dernier écrivain gagne — CORRECT
+engine.overlay(node1Output, node2Output);
+// → { ..., properties: { accountId: { type: "string" } } }
+```
+
 👉 Pour la documentation complète de chaque méthode avec tous les exemples, consultez la **[Référence API](./docs/api-reference.md)**.
 
 ---
@@ -164,13 +215,13 @@ console.log(result.resolvedSup.branch); // "then"
 
 | Page | Description |
 |---|---|
-| **[Référence API](./docs/api-reference.md)** | Documentation détaillée de chaque méthode avec exemples |
+| **[Référence API](./docs/api-reference.md)** | Documentation détaillée de chaque méthode (`JsonSchemaCompatibilityChecker` + `MergeEngine`) avec exemples |
 | **[Guide des fonctionnalités](./docs/features-guide.md)** | Tour complet des fonctionnalités : types, `required`, contraintes numériques, `enum`/`const`, `anyOf`/`oneOf`, `not`, `format`, `pattern`, conditions `if/then/else`, `allOf`... |
 | **[Fonctions utilitaires](./docs/utilities.md)** | `isPatternSubset`, `arePatternsEquivalent`, `isTrivialPattern` |
-| **[Cas d'usage concrets](./docs/use-cases.md)** | Connexion de nœuds dans un orchestrateur, validation de réponse API, unions discriminées, formulaires conditionnels |
+| **[Cas d'usage concrets](./docs/use-cases.md)** | Connexion de nœuds, pipeline séquentiel (overlay), validation de réponse API, unions discriminées, formulaires conditionnels |
 | **[Types exportés](./docs/types.md)** | `SubsetResult`, `SchemaError`, `ResolvedConditionResult`, `ResolvedSubsetResult`, `CheckConditionsOptions` |
 | **[Limitations connues](./docs/limitations.md)** | Cross-keyword constraints, `oneOf` exclusivité, patterns probabilistes, `$ref` non supporté |
-| **[Architecture interne](./docs/architecture.md)** | Diagramme des modules, flux de vérification, dépendances |
+| **[Architecture interne](./docs/architecture.md)** | Diagramme des modules, flux de vérification, merge vs overlay, dépendances |
 
 ---
 
