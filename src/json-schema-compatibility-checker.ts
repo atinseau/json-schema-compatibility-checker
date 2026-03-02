@@ -1,5 +1,6 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 import { resolveConditions } from "./condition-resolver.ts";
+import { narrowSchemaWithData } from "./data-narrowing.ts";
 import { formatResult } from "./formatter.ts";
 import { MergeEngine } from "./merge-engine.ts";
 import { normalize } from "./normalizer.ts";
@@ -23,7 +24,7 @@ import type {
 	SchemaError,
 	SubsetResult,
 } from "./types.ts";
-import { deepEqual } from "./utils.ts";
+import { deepEqual, isPlainObj } from "./utils.ts";
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 
@@ -159,19 +160,60 @@ export class JsonSchemaCompatibilityChecker {
 	): SubsetResult | ResolvedSubsetResult {
 		// ── Condition resolution path ──
 		if (options) {
-			const resolvedSub = this.resolveConditions(
+			const subData = options.subData;
+			const supData = options.supData ?? options.subData;
+
+			// resolveConditions expects Record<string, unknown> for property access;
+			// coerce non-object data to empty object (no conditions to resolve for primitives)
+			const subDataForConditions = isPlainObj(subData)
+				? subData
+				: ({} as Record<string, unknown>);
+			const supDataForConditions = isPlainObj(supData)
+				? supData
+				: ({} as Record<string, unknown>);
+
+			const resolvedSub = resolveConditions(
 				sub as JSONSchema7,
-				options.subData,
+				subDataForConditions,
+				this.engine,
 			);
-			const resolvedSup = this.resolveConditions(
+			const resolvedSup = resolveConditions(
 				sup as JSONSchema7,
-				options.supData ?? options.subData,
+				supDataForConditions,
+				this.engine,
 			);
+
+			// ── Data narrowing ──
+			// When runtime data is available, narrow the resolved schema by
+			// constraining generic types to enum values when the data matches
+			// the opposite schema's enum constraints.
+			const narrowedSubResolved =
+				subData !== undefined
+					? narrowSchemaWithData(
+							resolvedSub.resolved,
+							subData,
+							resolvedSup.resolved,
+						)
+					: resolvedSub.resolved;
+
+			const narrowedSupResolved =
+				supData !== undefined
+					? narrowSchemaWithData(
+							resolvedSup.resolved,
+							supData,
+							resolvedSub.resolved,
+						)
+					: resolvedSup.resolved;
+
 			const result = this.checkInternal(
-				resolvedSub.resolved,
-				resolvedSup.resolved,
+				narrowedSubResolved,
+				narrowedSupResolved,
 			);
-			return { ...result, resolvedSub, resolvedSup };
+			return {
+				...result,
+				resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
+				resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
+			};
 		}
 
 		// ── Standard path (no condition resolution) ──
@@ -238,18 +280,24 @@ export class JsonSchemaCompatibilityChecker {
 		return formatResult(label, result);
 	}
 
-	// ── Private ────────────────────────────────────────────────────────────
+	// ── Condition Resolution ────────────────────────────────────────────────
 
 	/**
-	 * Résout les `if/then/else` d'un schema en évaluant le `if` contre
-	 * des données partielles (discriminants).
+	 * Resolves `if/then/else` conditions in a schema by evaluating the `if`
+	 * against partial data (discriminants).
+	 *
+	 * @param schema - The schema containing conditions to resolve
+	 * @param data - The runtime data used to evaluate conditions
+	 * @returns The resolved schema with branch info and discriminants
 	 */
-	private resolveConditions(
+	resolveConditions(
 		schema: JSONSchema7,
 		data: Record<string, unknown>,
 	): ResolvedConditionResult {
 		return resolveConditions(schema, data, this.engine);
 	}
+
+	// ── Private ────────────────────────────────────────────────────────────
 
 	/**
 	 * Logique interne de check sans résolution de conditions.

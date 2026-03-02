@@ -27,10 +27,10 @@ export interface SubsetResult {
  * sinon `subData` est utilisé pour les deux.
  */
 export interface CheckConditionsOptions {
-	/** Données discriminantes pour résoudre les conditions du sub schema */
-	subData: Record<string, unknown>;
-	/** Données discriminantes pour résoudre les conditions du sup schema (défaut: subData) */
-	supData?: Record<string, unknown>;
+	/** Runtime data for the sub schema — used for condition resolution and enum narrowing */
+	subData: unknown;
+	/** Runtime data for the sup schema (defaults to subData) — used for condition resolution and enum narrowing */
+	supData?: unknown;
 }
 
 /**
