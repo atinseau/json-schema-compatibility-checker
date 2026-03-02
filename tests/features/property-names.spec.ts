@@ -410,9 +410,9 @@ describe("propertyNames — behavior exploration", () => {
 		});
 	});
 
-	// ── canConnect ─────────────────────────────────────────────────────────
+	// ── check (connection scenarios) ──────────────────────────────────────
 
-	describe("canConnect", () => {
+	describe("check (connection scenarios)", () => {
 		test("source with propertyNames constraint → target without → connectable", () => {
 			const source: JSONSchema7 = {
 				type: "object",
@@ -421,7 +421,7 @@ describe("propertyNames — behavior exploration", () => {
 			const target: JSONSchema7 = {
 				type: "object",
 			};
-			const result = checker.canConnect(source, target);
+			const result = checker.check(source, target);
 			expect(result.isSubset).toBe(true);
 		});
 
@@ -433,7 +433,7 @@ describe("propertyNames — behavior exploration", () => {
 				type: "object",
 				propertyNames: { pattern: "^[a-z_]+$" },
 			};
-			const result = checker.canConnect(source, target);
+			const result = checker.check(source, target);
 			expect(result.isSubset).toBe(false);
 		});
 	});

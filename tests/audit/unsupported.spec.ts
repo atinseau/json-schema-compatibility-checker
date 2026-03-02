@@ -153,7 +153,7 @@ describe("readOnly / writeOnly — not handled", () => {
 		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
 
-	test("canConnect ignores readOnly/writeOnly semantics", () => {
+	test("check ignores readOnly/writeOnly semantics", () => {
 		// In a proper implementation:
 		// - readOnly fields in output should be connectable to input
 		// - writeOnly fields in output should NOT be read by input
@@ -177,7 +177,7 @@ describe("readOnly / writeOnly — not handled", () => {
 			required: ["id"],
 		};
 
-		const result = checker.canConnect(sourceOutput, targetInput);
+		const result = checker.check(sourceOutput, targetInput);
 		// The checker doesn't use readOnly/writeOnly for connection logic
 		expect(result).toHaveProperty("isSubset");
 	});

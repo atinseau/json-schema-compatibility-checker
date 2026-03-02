@@ -110,9 +110,9 @@ assert(
 	"check should return no errors for valid subset",
 );
 
-// ─── Verify canConnect ───────────────────────────────────────────────────────
+// ─── Verify check (connection scenario) ─────────────────────────────────────
 
-const connectionResult = checker.canConnect(
+const connectionResult = checker.check(
 	{
 		type: "object",
 		properties: { id: { type: "string" }, name: { type: "string" } },
@@ -126,11 +126,7 @@ const connectionResult = checker.canConnect(
 );
 assert(
 	connectionResult.isSubset === true,
-	"canConnect should return isSubset: true when source output fits target input",
-);
-assert(
-	connectionResult.direction === "sourceOutput ⊆ targetInput",
-	`canConnect should include direction, got: ${JSON.stringify(connectionResult.direction)}`,
+	"check should return isSubset: true when source output fits target input",
 );
 
 // ─── Verify isEqual ──────────────────────────────────────────────────────────
@@ -297,7 +293,7 @@ const expectedInput = {
 	required: ["data"],
 };
 
-const realWorldResult = checker.canConnect(apiOutput, expectedInput);
+const realWorldResult = checker.check(apiOutput, expectedInput);
 assert(
 	realWorldResult.isSubset === true,
 	"Real-world API output should be a subset of the expected input schema",

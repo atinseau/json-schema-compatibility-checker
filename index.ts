@@ -3,13 +3,14 @@ import { JsonSchemaCompatibilityChecker } from "./src";
 
 const checker = new JsonSchemaCompatibilityChecker();
 
-const schema: JSONSchema7 = {
+const schema1: JSONSchema7 = {
 	type: "string",
+	enum: ["red", "green", "blue"],
 };
 
 const schema2: JSONSchema7 = {
-	type: "integer",
+	type: "string",
 };
 
-const result = checker.canConnect(schema, schema2);
+const result = checker.check(schema2, schema1, "red");
 console.log(result);

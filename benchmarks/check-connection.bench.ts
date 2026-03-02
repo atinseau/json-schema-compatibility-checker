@@ -298,16 +298,16 @@ const simpleStringInput: JSONSchema7 = {
 summary(() => {
 	boxplot(() => {
 		bench("simple: string value (compatible)", () =>
-			checker.canConnect(simpleStringOutput, simpleStringInput),
+			checker.check(simpleStringOutput, simpleStringInput),
 		);
 		bench("simple: identical schemas (compatible)", () =>
-			checker.canConnect(identicalSchema, identicalSchema),
+			checker.check(identicalSchema, identicalSchema),
 		);
 		bench("simple: empty ↔ empty (compatible)", () =>
-			checker.canConnect(emptySchema, emptySchema),
+			checker.check(emptySchema, emptySchema),
 		);
 		bench("simple: type conflict (incompatible)", () =>
-			checker.canConnect(stringValOutput, numberValInput),
+			checker.check(stringValOutput, numberValInput),
 		);
 	});
 });
@@ -315,10 +315,10 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("order: strict output → loose input (compatible)", () =>
-			checker.canConnect(orderOutput, orderInput),
+			checker.check(orderOutput, orderInput),
 		);
 		bench("order: loose input → strict output (incompatible, reverse)", () =>
-			checker.canConnect(orderInput, orderOutput),
+			checker.check(orderInput, orderOutput),
 		);
 	});
 });
@@ -326,10 +326,10 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("real-world: API response → expected input (compatible)", () =>
-			checker.canConnect(apiResponse, expectedInput),
+			checker.check(apiResponse, expectedInput),
 		);
 		bench("real-world: webhook → strict event (incompatible)", () =>
-			checker.canConnect(webhookPayload, strictEventSchema),
+			checker.check(webhookPayload, strictEventSchema),
 		);
 	});
 });
@@ -337,10 +337,10 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("real-world: discriminated union → flexible input (compatible)", () =>
-			checker.canConnect(discriminatedUnionOutput, flexibleInput),
+			checker.check(discriminatedUnionOutput, flexibleInput),
 		);
 		bench("real-world: paginated output → expected input (compatible)", () =>
-			checker.canConnect(paginatedOutput, paginatedInput),
+			checker.check(paginatedOutput, paginatedInput),
 		);
 	});
 });
@@ -348,7 +348,7 @@ summary(() => {
 summary(() => {
 	boxplot(() => {
 		bench("integration: closed output + format + not (compatible)", () =>
-			checker.canConnect(closedOutputWithFormat, targetWithNot),
+			checker.check(closedOutputWithFormat, targetWithNot),
 		);
 	});
 });

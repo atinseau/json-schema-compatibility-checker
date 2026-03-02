@@ -143,7 +143,7 @@ describe("$ref — CRITICAL GAP", () => {
 		expect(typeof result).toBe("boolean");
 	});
 
-	test("canConnect with $ref — connection check is unreliable", () => {
+	test("check with $ref — subset check is unreliable", () => {
 		const sourceOutput: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -170,10 +170,9 @@ describe("$ref — CRITICAL GAP", () => {
 			required: ["result"],
 		};
 
-		const result = checker.canConnect(sourceOutput, targetInput);
+		const result = checker.check(sourceOutput, targetInput);
 		// Source has $ref (unresolved), target has inline schema
 		// The result is unreliable
 		expect(result).toHaveProperty("isSubset");
-		expect(result).toHaveProperty("direction");
 	});
 });

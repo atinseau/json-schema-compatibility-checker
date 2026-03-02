@@ -20,11 +20,6 @@ export interface SubsetResult {
 	errors: SchemaError[];
 }
 
-export interface ConnectionResult extends SubsetResult {
-	/** Direction lisible du check */
-	direction: string;
-}
-
 export interface ResolvedConditionResult {
 	/** Le schema avec les if/then/else résolus (aplatis) */
 	resolved: JSONSchema7;

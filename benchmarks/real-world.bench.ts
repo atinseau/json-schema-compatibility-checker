@@ -415,24 +415,24 @@ const formatIdnHostname: JSONSchema7 = {
 //  Benchmarks — End-to-End Real World Scenarios
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ─── canConnect: Node Orchestration ──────────────────────────────────────────
+// ─── check: Node Orchestration ───────────────────────────────────────────────
 
 summary(() => {
 	boxplot(() => {
-		bench("canConnect: API response → expected input (compatible)", () =>
-			checker.canConnect(apiResponse, expectedInput),
+		bench("check: API response → expected input (compatible)", () =>
+			checker.check(apiResponse, expectedInput),
 		);
-		bench("canConnect: webhook → strict event (incompatible)", () =>
-			checker.canConnect(webhookPayload, strictEventSchema),
+		bench("check: webhook → strict event (incompatible)", () =>
+			checker.check(webhookPayload, strictEventSchema),
 		);
-		bench("canConnect: discriminated union → flexible input", () =>
-			checker.canConnect(discriminatedUnionOutput, flexibleInput),
+		bench("check: discriminated union → flexible input", () =>
+			checker.check(discriminatedUnionOutput, flexibleInput),
 		);
-		bench("canConnect: paginated output → expected input", () =>
-			checker.canConnect(paginatedOutput, paginatedInput),
+		bench("check: paginated output → expected input", () =>
+			checker.check(paginatedOutput, paginatedInput),
 		);
-		bench("canConnect: closed source + format + not", () =>
-			checker.canConnect(closedSource, notTarget),
+		bench("check: closed source + format + not", () =>
+			checker.check(closedSource, notTarget),
 		);
 	});
 });

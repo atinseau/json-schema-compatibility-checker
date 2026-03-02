@@ -17,7 +17,6 @@ import {
 	isAtomicSubsetOf,
 } from "./subset-checker";
 import type {
-	ConnectionResult,
 	ResolvedConditionResult,
 	SchemaError,
 	SubsetResult,
@@ -29,7 +28,6 @@ import { deepEqual } from "./utils";
 export type {
 	SchemaError,
 	SubsetResult,
-	ConnectionResult,
 	ResolvedConditionResult,
 	BranchType,
 	BranchResult,
@@ -63,7 +61,6 @@ export {
 //
 // checker.isSubset(strict, loose);             // true
 // checker.check(loose, strict);                // { isSubset: false, diffs: [...] }
-// checker.canConnect(nodeA.output, nodeB.input); // ConnectionResult
 // ```
 
 export class JsonSchemaCompatibilityChecker {
@@ -164,22 +161,6 @@ export class JsonSchemaCompatibilityChecker {
 
 		// Cas standard
 		return checkAtomic(nSub, nSup, this.engine);
-	}
-
-	// ── Connection check ───────────────────────────────────────────────────
-
-	/**
-	 * Vérifie si la sortie d'un nœud source peut alimenter l'entrée d'un nœud cible.
-	 *
-	 * Sémantique : `sourceOutput ⊆ targetInput`
-	 * → Toute donnée produite par source sera acceptée par target.
-	 */
-	canConnect(
-		sourceOutput: JSONSchema7Definition,
-		targetInput: JSONSchema7Definition,
-	): ConnectionResult {
-		const result = this.check(sourceOutput, targetInput);
-		return { ...result, direction: "sourceOutput ⊆ targetInput" };
 	}
 
 	// ── Equality ───────────────────────────────────────────────────────────

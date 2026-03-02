@@ -15,7 +15,6 @@
   - [`check(sub, sup)`](#checksub-sup)
   - [`isEqual(a, b)`](#isequala-b)
   - [`intersect(a, b)`](#intersecta-b)
-  - [`canConnect(sourceOutput, targetInput)`](#canconnectsourceoutput-targetinput)
   - [`resolveConditions(schema, data)`](#resolveconditionsschema-data)
   - [`checkResolved(sub, sup, subData, supData?)`](#checkresolvedsub-sup-subdata-supdata)
   - [`normalize(schema)`](#normalizeschema)
@@ -359,64 +358,6 @@ const result = checker.intersect(
 ```ts
 checker.intersect({ type: "string" }, { type: "number" });
 // → null (aucune valeur ne peut être à la fois string ET number)
-```
-
----
-
-### `canConnect(sourceOutput, targetInput)`
-
-```ts
-canConnect(
-  sourceOutput: JSONSchema7Definition,
-  targetInput: JSONSchema7Definition
-): ConnectionResult
-```
-
-Vérifie si la **sortie d'un nœud source** peut alimenter l'**entrée d'un nœud cible**. Sémantiquement : `sourceOutput ⊆ targetInput`.
-
-```ts
-interface ConnectionResult extends SubsetResult {
-  direction: string; // "sourceOutput ⊆ targetInput"
-}
-```
-
-```ts
-const nodeAOutput = {
-  type: "object",
-  properties: {
-    id: { type: "string" },
-    total: { type: "number", minimum: 0 },
-    customer: {
-      type: "object",
-      properties: {
-        email: { type: "string", format: "email" },
-        name: { type: "string" },
-      },
-      required: ["email", "name"],
-    },
-  },
-  required: ["id", "total", "customer"],
-};
-
-const nodeBInput = {
-  type: "object",
-  properties: {
-    id: { type: "string" },
-    total: { type: "number" },
-    customer: {
-      type: "object",
-      properties: { email: { type: "string" } },
-      required: ["email"],
-    },
-  },
-  required: ["id", "total", "customer"],
-};
-
-const result = checker.canConnect(nodeAOutput, nodeBInput);
-
-console.log(result.isSubset);  // true ✅
-console.log(result.direction); // "sourceOutput ⊆ targetInput"
-console.log(result.diffs);     // []
 ```
 
 ---
@@ -1636,13 +1577,12 @@ const nodeBInput = {
   required: ["items"],
 };
 
-const connection = checker.canConnect(nodeAOutput, nodeBInput);
-console.log(connection.isSubset);  // true ✅
-console.log(connection.direction); // "sourceOutput ⊆ targetInput"
+const result = checker.check(nodeAOutput, nodeBInput);
+console.log(result.isSubset);  // true ✅
 
 // Si incompatible, le diagnostic explique pourquoi
-if (!connection.isSubset) {
-  console.log(checker.formatResult("NodeA → NodeB", connection));
+if (!result.isSubset) {
+  console.log(checker.formatResult("NodeA → NodeB", result));
 }
 ```
 
@@ -1706,7 +1646,7 @@ const consumerExpects = {
   required: ["data"],
 };
 
-const result = checker.canConnect(apiResponse, consumerExpects);
+const result = checker.check(apiResponse, consumerExpects);
 console.log(result.isSubset); // true ✅
 // L'API retourne plus de données que ce que le consommateur attend,
 // mais TOUTES les données requises sont présentes et du bon type.
@@ -1829,7 +1769,6 @@ console.log(personalResult.resolvedSup.branch); // "else"
 ```ts
 import type {
   SubsetResult,
-  ConnectionResult,
   ResolvedConditionResult,
   SchemaDiff,
   BranchType,
@@ -1862,15 +1801,6 @@ interface SubsetResult {
   merged: JSONSchema7Definition | null;
   /** Différences structurelles détectées entre sub et l'intersection */
   diffs: SchemaDiff[];
-}
-```
-
-### `ConnectionResult`
-
-```ts
-interface ConnectionResult extends SubsetResult {
-  /** Direction lisible du check */
-  direction: string;
 }
 ```
 

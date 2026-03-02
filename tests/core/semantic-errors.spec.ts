@@ -1691,11 +1691,11 @@ describe("formatSchemaType rendering in errors", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  16. canConnect errors
+//  16. check errors (connection scenarios)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("canConnect error reporting", () => {
-	test("incompatible connection reports errors with direction", () => {
+describe("check error reporting (connection scenarios)", () => {
+	test("incompatible connection reports errors", () => {
 		const sourceOutput: JSONSchema7 = {
 			type: "object",
 			properties: { value: { type: "string" } },
@@ -1706,13 +1706,14 @@ describe("canConnect error reporting", () => {
 			properties: { value: { type: "number" } },
 			required: ["value"],
 		};
-		const result = checker.canConnect(sourceOutput, targetInput);
+		const result = checker.check(sourceOutput, targetInput);
 
 		expect(result.isSubset).toBe(false);
-		expect(result.direction).toBe("sourceOutput ⊆ targetInput");
 		expect(result.errors.length).toBeGreaterThanOrEqual(1);
 
-		const valueError = result.errors.find((e) => e.key === "value");
+		const valueError = result.errors.find(
+			(e: { key: string }) => e.key === "value",
+		);
 		expect(valueError).toMatchObject({
 			key: "value",
 			expected: "number",
@@ -1734,7 +1735,7 @@ describe("canConnect error reporting", () => {
 			properties: { id: { type: "string" } },
 			required: ["id"],
 		};
-		const result = checker.canConnect(sourceOutput, targetInput);
+		const result = checker.check(sourceOutput, targetInput);
 
 		expect(result.isSubset).toBe(true);
 		expect(result.errors).toEqual([]);
