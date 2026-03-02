@@ -337,9 +337,9 @@ describe("Pattern intersection — behavior and limitations", () => {
 		});
 	});
 
-	// ── canConnect avec patterns ──────────────────────────────────────────
+	// ── check avec patterns ───────────────────────────────────────────────
 
-	describe("canConnect with pattern constraints", () => {
+	describe("check with pattern constraints", () => {
 		test("source with pattern → target without pattern: connectable", () => {
 			const source: JSONSchema7 = {
 				type: "object",
@@ -355,7 +355,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 				},
 				required: ["sku"],
 			};
-			const result = checker.canConnect(source, target);
+			const result = checker.check(source, target);
 			expect(result.isSubset).toBe(true);
 		});
 
@@ -374,7 +374,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 				},
 				required: ["sku"],
 			};
-			const result = checker.canConnect(source, target);
+			const result = checker.check(source, target);
 			expect(result.isSubset).toBe(false);
 		});
 
@@ -395,7 +395,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 			};
 			// FR12345 matche les deux, et tout ^FR[0-9]{5}$ ⊆ ^[A-Z]{2}[0-9]+$
 			// Sampling confirms: all generated strings from sub match sup.
-			const result = checker.canConnect(source, target);
+			const result = checker.check(source, target);
 			expect(result.isSubset).toBe(true); // FIXED — sampling confirms inclusion
 		});
 	});

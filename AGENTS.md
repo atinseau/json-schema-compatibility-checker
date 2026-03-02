@@ -58,7 +58,7 @@ The CI pipeline (`.github/workflows/ci.yml`) runs: check-types → biome check �
 src/
 ├── index.ts                          # Public re-exports (entry point)
 ├── json-schema-compatibility-checker.ts  # Main facade class (JsonSchemaCompatibilityChecker)
-├── types.ts                          # Public interfaces: SubsetResult, SchemaError, ConnectionResult, ResolvedConditionResult
+├── types.ts                          # Public interfaces: SubsetResult, SchemaError, ResolvedConditionResult
 ├── merge-engine.ts                   # MergeEngine: allOf merge + conflict detection (wraps @x0k/json-schema-merge)
 ├── subset-checker.ts                 # Core subset logic: isAtomicSubsetOf, evaluateNot, getBranchesTyped, checkAtomic/Branched
 ├── normalizer.ts                     # Schema normalizer: infer type from const/enum, double-negation resolution, recursive normalization
@@ -70,7 +70,7 @@ src/
 └── utils.ts                          # Shared utilities: deepEqual, isPlainObj, hasOwn, omitKeys, unionStrings
 
 tests/
-├── core/           # Tests for main API methods: isSubset, check, canConnect, intersect, isEqual, normalize, semantic-errors, edge-cases
+├── core/           # Tests for main API methods: isSubset, check, intersect, isEqual, normalize, semantic-errors, edge-cases
 ├── features/       # Tests per JSON Schema feature: type-system, const-enum, not, pattern, format, anyOf/oneOf, object-properties, etc.
 ├── conditions/     # Tests for if/then/else resolution, evaluateCondition, checkResolved
 ├── merge-engine/   # Tests for the merge engine: types, keywords, enum-const, advanced merges

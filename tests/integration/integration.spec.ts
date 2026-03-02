@@ -225,7 +225,7 @@ describe("complex real-world schemas — orchestration use cases", () => {
 			required: ["data"],
 		};
 
-		const result = checker.canConnect(apiResponse, expectedInput);
+		const result = checker.check(apiResponse, expectedInput);
 		expect(result.isSubset).toBe(true);
 	});
 
@@ -255,7 +255,7 @@ describe("complex real-world schemas — orchestration use cases", () => {
 			required: ["event", "payload"],
 		};
 
-		const result = checker.canConnect(webhookPayload, strictEventSchema);
+		const result = checker.check(webhookPayload, strictEventSchema);
 		expect(result.isSubset).toBe(false);
 		expect(result.errors.length).toBeGreaterThan(0);
 	});
@@ -341,9 +341,7 @@ describe("complex real-world schemas — orchestration use cases", () => {
 			required: ["items"],
 		};
 
-		expect(checker.canConnect(paginatedOutput, expectedInput).isSubset).toBe(
-			true,
-		);
+		expect(checker.check(paginatedOutput, expectedInput).isSubset).toBe(true);
 	});
 });
 

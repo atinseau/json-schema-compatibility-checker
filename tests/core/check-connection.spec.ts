@@ -9,10 +9,10 @@ beforeAll(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  canConnect
+//  check — connection scenarios (sourceOutput ⊆ targetInput)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("canConnect", () => {
+describe("check (connection scenarios)", () => {
 	const nodeAOutput: JSONSchema7 = {
 		type: "object",
 		properties: {
@@ -70,40 +70,38 @@ describe("canConnect", () => {
 	};
 
 	test("compatible output → input returns isSubset true", () => {
-		const result = checker.canConnect(nodeAOutput, nodeBInput);
+		const result = checker.check(nodeAOutput, nodeBInput);
 
 		expect(result.isSubset).toBe(true);
-		expect(result.direction).toBe("sourceOutput ⊆ targetInput");
 		expect(result.errors).toEqual([]);
 	});
 
-	test("incompatible input → output returns isSubset false with diffs", () => {
-		const result = checker.canConnect(nodeBInput, nodeAOutput);
+	test("incompatible input → output returns isSubset false with errors", () => {
+		const result = checker.check(nodeBInput, nodeAOutput);
 
 		expect(result.isSubset).toBe(false);
-		expect(result.direction).toBe("sourceOutput ⊆ targetInput");
 		expect(result.errors.length).toBeGreaterThan(0);
 	});
 
-	test("identical schemas are always connectable", () => {
+	test("identical schemas are always compatible", () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: { id: { type: "string" } },
 			required: ["id"],
 		};
-		const result = checker.canConnect(schema, schema);
+		const result = checker.check(schema, schema);
 
 		expect(result.isSubset).toBe(true);
 	});
 
 	test("empty output can connect to empty input", () => {
-		const result = checker.canConnect({}, {});
+		const result = checker.check({}, {});
 
 		expect(result.isSubset).toBe(true);
 	});
 
 	test("typed output cannot connect to incompatible input", () => {
-		const result = checker.canConnect(
+		const result = checker.check(
 			{
 				type: "object",
 				properties: { val: { type: "string" } },

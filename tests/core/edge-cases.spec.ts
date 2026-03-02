@@ -204,14 +204,4 @@ describe("edge cases", () => {
 			expect(checker.isEqual(ab, ba)).toBe(true);
 		}
 	});
-
-	test("canConnect result extends SubsetResult with direction field", () => {
-		const result = checker.canConnect({ type: "string" }, { type: "string" });
-
-		expect(result).toHaveProperty("isSubset");
-		expect(result).toHaveProperty("merged");
-		expect(result).toHaveProperty("errors");
-		expect(result).toHaveProperty("direction");
-		expect(typeof result.direction).toBe("string");
-	});
 });

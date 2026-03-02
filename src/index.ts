@@ -7,7 +7,6 @@ export {
 } from "./pattern-subset";
 export { formatSchemaType } from "./semantic-errors";
 export type {
-	ConnectionResult,
 	ResolvedConditionResult,
 	SchemaError,
 	SubsetResult,
