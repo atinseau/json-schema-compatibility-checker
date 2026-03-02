@@ -12,5 +12,7 @@ const schema2: JSONSchema7 = {
 	type: "string",
 };
 
-const result = checker.check(schema2, schema1, "red");
+const result = checker.check(schema2, schema1, {
+	subData: {},
+});
 console.log(result);
