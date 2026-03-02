@@ -16,7 +16,7 @@
   - [`isEqual(a, b)`](#isequala-b)
   - [`intersect(a, b)`](#intersecta-b)
   - [`resolveConditions(schema, data)`](#resolveconditionsschema-data)
-  - [`checkResolved(sub, sup, subData, supData?)`](#checkresolvedsub-sup-subdata-supdata)
+  - [`check(sub, sup, options)`](#checksub-sup-options)
   - [`normalize(schema)`](#normalizeschema)
   - [`formatResult(label, result)`](#formatresultlabel-result)
 - [Guide des fonctionnalités](#guide-des-fonctionnalités)
@@ -202,22 +202,24 @@ checker.isSubset({ type: "string" }, true); // → true
 
 ```ts
 check(sub: JSONSchema7Definition, sup: JSONSchema7Definition): SubsetResult
+check(sub: JSONSchema7Definition, sup: JSONSchema7Definition, options: CheckConditionsOptions): ResolvedSubsetResult
 ```
 
-Comme `isSubset`, mais retourne un **résultat détaillé** avec les différences structurelles.
+Comme `isSubset`, mais retourne un **résultat détaillé** avec les erreurs sémantiques.
+
+Quand `options` est fourni, les conditions `if/then/else` sont résolues avant le check (voir [`check(sub, sup, options)`](#checksub-sup-options) plus bas).
 
 ```ts
+interface SchemaError {
+  key: string;        // Chemin normalisé (ex: "user.name", "users[].email")
+  expected: string;   // Type/valeur attendu(e) par le schema cible (sup)
+  received: string;   // Type/valeur reçu(e) depuis le schema source (sub)
+}
+
 interface SubsetResult {
   isSubset: boolean;
   merged: JSONSchema7Definition | null;  // Résultat de l'intersection
-  diffs: SchemaDiff[];                    // Différences structurelles
-}
-
-interface SchemaDiff {
-  path: string;           // Chemin JSON-path vers la divergence
-  type: "added" | "removed" | "changed";
-  expected: unknown;      // Valeur dans le schema original (sub)
-  actual: unknown;        // Valeur dans le schema mergé
+  errors: SchemaError[];                  // Erreurs sémantiques
 }
 ```
 
@@ -230,7 +232,7 @@ const result = checker.check(
 );
 
 console.log(result.isSubset); // true
-console.log(result.diffs);    // [] (aucune différence)
+console.log(result.errors);   // [] (aucune erreur)
 console.log(result.merged);   // { type: "string", minLength: 5 }
 ```
 
@@ -253,12 +255,13 @@ const sup = {
 };
 
 const result = checker.check(sub, sup);
+console.log(result.errors);
+// [{ key: "age", expected: "number", received: "undefined" }]
 
 console.log(result.isSubset); // false
-console.log(result.diffs);
+console.log(result.errors);
 // [
-//   { path: "required", type: "changed", expected: ["name"], actual: ["name", "age"] },
-//   { path: "properties.age", type: "added", expected: undefined, actual: { type: "number" } }
+//   { key: "age", expected: "number", received: "undefined" }
 // ]
 ```
 
@@ -269,7 +272,7 @@ const result = checker.check({ type: "string" }, { type: "number" });
 
 console.log(result.isSubset); // false
 console.log(result.merged);   // null (intersection impossible)
-console.log(result.diffs);    // [{ path: "$", type: "changed", expected: ..., actual: "Incompatible..." }]
+console.log(result.errors);   // [{ key: "$root", expected: "number", received: "string" }]
 ```
 
 ---
@@ -422,21 +425,31 @@ console.log(personal.resolved.required);
 
 ---
 
-### `checkResolved(sub, sup, subData, supData?)`
+### `check(sub, sup, options)`
 
 ```ts
-checkResolved(
-  sub: JSONSchema7,
-  sup: JSONSchema7,
-  subData: Record<string, unknown>,
-  supData?: Record<string, unknown>
-): SubsetResult & {
+check(
+  sub: JSONSchema7Definition,
+  sup: JSONSchema7Definition,
+  options: CheckConditionsOptions
+): ResolvedSubsetResult
+```
+
+Résout les conditions `if/then/else` des deux schemas **puis** vérifie `sub ⊆ sup`. Utile quand le superset contient des `if/then/else` et que vous connaissez les valeurs discriminantes. Effectue aussi un **narrowing** du sub par rapport aux contraintes `enum`/`const` du sup en utilisant les données runtime.
+
+```ts
+interface CheckConditionsOptions {
+  /** Runtime data for the sub schema — used for condition resolution and enum narrowing */
+  subData: unknown;
+  /** Runtime data for the sup schema (defaults to subData) — used for condition resolution and enum narrowing */
+  supData?: unknown;
+}
+
+interface ResolvedSubsetResult extends SubsetResult {
   resolvedSub: ResolvedConditionResult;
   resolvedSup: ResolvedConditionResult;
 }
 ```
-
-Raccourci : résout les conditions des deux schemas **puis** vérifie `sub ⊆ sup`. Utile quand le superset contient des `if/then/else` et que vous connaissez les valeurs discriminantes.
 
 ```ts
 const conditionalSup = {
@@ -470,10 +483,16 @@ const sub = {
 // Sans résolution : false (le if/then/else brut ne matche pas)
 console.log(checker.isSubset(sub, conditionalSup)); // false
 
-// Avec résolution : true !
-const result = checker.checkResolved(sub, conditionalSup, { kind: "text" });
+// Avec résolution via options : true !
+const result = checker.check(sub, conditionalSup, { subData: { kind: "text" } });
 console.log(result.isSubset);          // true ✅
 console.log(result.resolvedSup.branch); // "then"
+
+// Avec des données différentes pour sub et sup
+const result2 = checker.check(sub, conditionalSup, {
+  subData: { kind: "text" },
+  supData: { kind: "text" },
+});
 ```
 
 ---
@@ -522,9 +541,8 @@ const result = checker.check(
 
 console.log(checker.formatResult("range check", result));
 // ❌ range check: false
-//    Diffs:
-//      ~ minimum: 0 → 5
-//      ~ maximum: 100 → 10
+//    Errors:
+//      ✗ $root: expected minimum 5, received minimum 0
 ```
 
 ```ts
@@ -537,10 +555,10 @@ console.log(checker.formatResult("strict ⊆ loose", result2));
 // ✅ strict ⊆ loose: true
 ```
 
-Les différentes icônes dans le diff :
-- `+` — contrainte **ajoutée** par le merge (absente dans sub, présente dans l'intersection)
-- `-` — contrainte **supprimée** par le merge
-- `~` — contrainte **modifiée** (valeur différente entre sub et l'intersection)
+Format de sortie :
+- `✅` — le check a réussi (`isSubset: true`)
+- `❌` — le check a échoué (`isSubset: false`), suivi de la liste des erreurs
+- `✗ key: expected X, received Y` — détail de chaque erreur sémantique
 
 ---
 
@@ -605,11 +623,8 @@ checker.isSubset(loose, strict); // false
 
 // Le diagnostic montre exactement ce qui manque
 const result = checker.check(loose, strict);
-console.log(result.diffs);
-// [
-//   { path: "required", type: "changed", expected: ["name"], actual: ["name", "age"] },
-//   { path: "properties.age", type: "added", expected: undefined, actual: { type: "number" } }
-// ]
+console.log(result.errors);
+// [{ key: "age", expected: "number", received: "undefined" }]
 ```
 
 ---
@@ -797,8 +812,8 @@ checker.isSubset(open, closed); // false
 
 // Le diagnostic montre la contrainte
 const result = checker.check(open, closed);
-const addPropDiff = result.diffs.find(d => d.path === "additionalProperties");
-console.log(addPropDiff); // { path: "additionalProperties", type: "added", ... }
+console.log(result.errors);
+// [{ key: "age", expected: "not allowed (additionalProperties: false)", received: "number" }]
 ```
 
 ---
@@ -851,19 +866,17 @@ const shallow = {
 checker.isSubset(deep, shallow); // true
 checker.isSubset(shallow, deep); // false
 
-// Les chemins de diff sont complets
+// Les erreurs montrent les propriétés manquantes avec un chemin complet
 const result = checker.check(shallow, deep);
-const bioDiff = result.diffs.find(
-  d => d.path === "properties.user.properties.profile.properties.bio"
-);
-console.log(bioDiff?.type); // "added"
+console.log(result.errors);
+// [{ key: "user.profile.bio", expected: "string", received: "undefined" }]
 ```
 
 ---
 
 ### 9. `anyOf` / `oneOf`
 
-La librairie supporte `anyOf` et `oneOf` avec distinction dans les chemins de diff.
+La librairie supporte `anyOf` et `oneOf` pour la vérification de sous-ensemble.
 
 #### anyOf
 
@@ -894,16 +907,16 @@ checker.isSubset(
 
 #### oneOf
 
-Le `oneOf` est traité comme `anyOf` pour la vérification de sous-ensemble (chaque branche doit être acceptée). La différence apparaît dans les **chemins de diff**.
+Le `oneOf` est traité comme `anyOf` pour la vérification de sous-ensemble (chaque branche doit être acceptée).
 
 ```ts
-// Les chemins de diff utilisent le bon label
 const result = checker.check(
   { oneOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }] },
   { oneOf: [{ type: "string" }, { type: "number" }] }
 );
 
-result.diffs[0].path; // "oneOf[2]" (et non "anyOf[2]")
+console.log(result.isSubset); // false
+console.log(result.errors);   // erreurs pour la branche non couverte
 ```
 
 #### Unions discriminées
@@ -1736,8 +1749,8 @@ const businessOutput = {
 checker.isSubset(businessOutput, formSchema); // false ❌
 
 // Avec résolution, le schéma conditionnel est aplati
-const result = checker.checkResolved(businessOutput, formSchema, {
-  accountType: "business",
+const result = checker.check(businessOutput, formSchema, {
+  subData: { accountType: "business" },
 });
 console.log(result.isSubset);          // true ✅
 console.log(result.resolvedSup.branch); // "then"
@@ -1755,8 +1768,8 @@ const personalOutput = {
   additionalProperties: false,
 };
 
-const personalResult = checker.checkResolved(personalOutput, formSchema, {
-  accountType: "personal",
+const personalResult = checker.check(personalOutput, formSchema, {
+  subData: { accountType: "personal" },
 });
 console.log(personalResult.isSubset);          // true ✅
 console.log(personalResult.resolvedSup.branch); // "else"
@@ -1769,25 +1782,23 @@ console.log(personalResult.resolvedSup.branch); // "else"
 ```ts
 import type {
   SubsetResult,
+  SchemaError,
   ResolvedConditionResult,
-  SchemaDiff,
-  BranchType,
-  BranchResult,
+  ResolvedSubsetResult,
+  CheckConditionsOptions,
 } from "json-schema-compatibility-checker";
 ```
 
-### `SchemaDiff`
+### `SchemaError`
 
 ```ts
-interface SchemaDiff {
-  /** Chemin JSON-path-like vers la divergence (ex: "properties.user.required") */
-  path: string;
-  /** Type de divergence */
-  type: "added" | "removed" | "changed";
-  /** Valeur dans le schema original (sub) */
-  expected: unknown;
-  /** Valeur dans le schema mergé (intersection) */
-  actual: unknown;
+interface SchemaError {
+  /** Chemin normalisé vers la propriété concernée (ex: "user.name", "users[].name", "accountId") */
+  key: string;
+  /** Type ou valeur attendu(e) par le schema cible (sup) */
+  expected: string;
+  /** Type ou valeur reçu(e) depuis le schema source (sub) */
+  received: string;
 }
 ```
 
@@ -1799,8 +1810,8 @@ interface SubsetResult {
   isSubset: boolean;
   /** Le schema résultant de l'intersection allOf(sub, sup), ou null si incompatible */
   merged: JSONSchema7Definition | null;
-  /** Différences structurelles détectées entre sub et l'intersection */
-  diffs: SchemaDiff[];
+  /** Erreurs sémantiques décrivant les incompatibilités entre les deux schemas */
+  errors: SchemaError[];
 }
 ```
 
@@ -1814,6 +1825,28 @@ interface ResolvedConditionResult {
   branch: "then" | "else" | null;
   /** Le discriminant utilisé pour résoudre */
   discriminant: Record<string, unknown>;
+}
+```
+
+### `ResolvedSubsetResult`
+
+```ts
+interface ResolvedSubsetResult extends SubsetResult {
+  /** Résultat de résolution des conditions du sub */
+  resolvedSub: ResolvedConditionResult;
+  /** Résultat de résolution des conditions du sup */
+  resolvedSup: ResolvedConditionResult;
+}
+```
+
+### `CheckConditionsOptions`
+
+```ts
+interface CheckConditionsOptions {
+  /** Runtime data for the sub schema — used for condition resolution and enum narrowing */
+  subData: unknown;
+  /** Runtime data for the sup schema (defaults to subData) — used for condition resolution and enum narrowing */
+  supData?: unknown;
 }
 ```
 
@@ -1859,7 +1892,7 @@ La comparaison de patterns regex utilise un **échantillonnage** (200 samples pa
 
 ### 4. `if/then/else` — nécessite des données discriminantes
 
-Les schemas avec `if/then/else` ne peuvent pas être comparés directement via `isSubset` car le merge brut ajoute les mots-clés conditionnels. Il faut utiliser `checkResolved()` avec les données discriminantes.
+Les schemas avec `if/then/else` ne peuvent pas être comparés directement via `isSubset` car le merge brut ajoute les mots-clés conditionnels. Il faut utiliser `check(sub, sup, { subData })` avec les données discriminantes.
 
 ### 5. `$ref` — non supporté
 
@@ -1900,9 +1933,9 @@ La librairie est organisée en modules spécialisés, orchestrés par la façade
 │  └──────────────┘  │ - stripNotFromSup        │  │
 │                     │ - stripPatternFromSup    │  │
 │  ┌──────────────┐  └──────────────────────────┘  │
-│  │    Differ     │                               │
+│  │Semantic Errors│                               │
 │  │              │  ┌──────────────────────────┐  │
-│  │ - computeDiff│  │    Pattern Subset         │  │
+│  │-computeErrors│  │    Pattern Subset         │  │
 │  │ - Recurse    │  │                          │  │
 │  │ - Properties │  │ - isPatternSubset        │  │
 │  └──────────────┘  │ - arePatternsEquivalent  │  │
@@ -1911,11 +1944,17 @@ La librairie est organisée en modules spécialisés, orchestrés par la façade
 │  │  Formatter    │                               │
 │  │              │  ┌──────────────────────────┐  │
 │  │ - formatResult│  │    Format Validator       │  │
-│  │ - Diff lines │  │                          │  │
+│  │ - Error lines│  │                          │  │
 │  └──────────────┘  │ - validateFormat         │  │
 │                     │ - isFormatSubset         │  │
-│                     │ - Format hierarchy       │  │
-│                     └──────────────────────────┘  │
+│  ┌──────────────┐  │ - Format hierarchy       │  │
+│  │Data Narrowing │  └──────────────────────────┘  │
+│  │              │                                │
+│  │-narrowSchema │                                │
+│  │ WithData     │                                │
+│  │ - enum match │                                │
+│  │ - Recurse    │                                │
+│  └──────────────┘                                │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -1940,7 +1979,6 @@ La librairie est organisée en modules spécialisés, orchestrés par la façade
 | Package | Usage |
 |---|---|
 | `@x0k/json-schema-merge` | Merge engine pour `allOf` resolution |
-| `lodash` | Utilitaires (isEqual, mapValues, union, etc.) |
 | `class-validator` | Validation des formats (email, URL, UUID, etc.) |
 | `randexp` | Génération de strings pour le sampling de patterns |
 
@@ -1948,4 +1986,4 @@ La librairie est organisée en modules spécialisés, orchestrés par la façade
 
 ## Licence
 
-Projet privé.
+MIT

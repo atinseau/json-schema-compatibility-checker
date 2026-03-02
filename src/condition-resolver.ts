@@ -26,17 +26,11 @@ import { deepEqual, hasOwn, isPlainObj, omitKeys, unionStrings } from "./utils";
 //   - Propriétés imbriquées (nested objects — récursion) [2.5]
 //   - `format` via `validateFormat` de `format-validator.ts` [2.6]
 //
-// Utilise lodash massivement :
-//   - `_.has` / `_.get`         pour l'accès sûr aux propriétés
-//   - `_.every` / `_.some`      pour les prédicats sur les collections
-//   - `_.union` / `_.uniq`      pour la fusion de tableaux (required, deps)
-//   - `_.isArray` / `_.isPlainObject` pour le typage des valeurs
-//   - `_.mapValues`             pour transformer les propriétés
-//   - `_.omit` / `_.pick`       pour sélectionner/exclure des clés
-//   - `_.keys` / `_.forEach`    pour l'itération
-//   - `_.reduce`                pour accumuler les résultats
-//   - `_.isEqual`               pour la comparaison profonde
-//   - `_.size` / `_.filter`     pour le comptage (oneOf)
+// Uses custom utilities from `utils.ts`:
+//   - `hasOwn` / `isPlainObj`   for safe property access and type checks
+//   - `deepEqual`               for deep structural comparison
+//   - `unionStrings`            for merging string arrays (required, deps)
+//   - `omitKeys`                for excluding keys from objects
 
 // ─── Keywords classification ─────────────────────────────────────────────────
 
@@ -394,7 +388,7 @@ function extractDiscriminants(
  *   - `pattern` / `format` → la branche gagne (plus spécifique)
  *   - Autres → tentative de merge via engine, sinon la branche gagne
  *
- * Utilise lodash massivement pour chaque opération de merge.
+ * Uses custom utilities from `utils.ts` for each merge operation.
  */
 function mergeBranchInto(
 	resolved: JSONSchema7,
@@ -405,7 +399,7 @@ function mergeBranchInto(
 
 	const branchSchema = branchDef as JSONSchema7;
 
-	// ── Merger required via _.union (dédupliquée automatiquement) ──
+	// ── Merge required via unionStrings (deduplicated automatically) ──
 	if (Array.isArray(branchSchema.required)) {
 		resolved.required = unionStrings(
 			resolved.required ?? [],

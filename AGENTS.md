@@ -63,16 +63,17 @@ src/
 ├── subset-checker.ts                 # Core subset logic: isAtomicSubsetOf, evaluateNot, getBranchesTyped, checkAtomic/Branched
 ├── normalizer.ts                     # Schema normalizer: infer type from const/enum, double-negation resolution, recursive normalization
 ├── condition-resolver.ts             # if/then/else resolution with discriminant data, allOf condition handling
+├── data-narrowing.ts                 # Narrows a schema using runtime data when the target has enum/const constraints
 ├── semantic-errors.ts                # Human-readable error generation: computeSemanticErrors, comparePropertySchemas
 ├── format-validator.ts               # Format validation (email, uri, date-time...) + format hierarchy (FORMAT_SUPERSETS)
 ├── pattern-subset.ts                 # Regex pattern subset via sampling (isPatternSubset, arePatternsEquivalent)
 ├── formatter.ts                      # formatResult() for debug output
-└── utils.ts                          # Shared utilities: deepEqual, isPlainObj, hasOwn, omitKeys, unionStrings
+└── utils.ts                          # Shared utilities: deepEqual, isPlainObj, hasOwn, omitKeys, unionStrings, schemaDeepEqual
 
 tests/
-├── core/           # Tests for main API methods: isSubset, check, intersect, isEqual, normalize, semantic-errors, edge-cases
-├── features/       # Tests per JSON Schema feature: type-system, const-enum, not, pattern, format, anyOf/oneOf, object-properties, etc.
-├── conditions/     # Tests for if/then/else resolution, evaluateCondition, checkResolved
+├── core/           # Tests for main API methods: isSubset, check, check-connection, intersect, isEqual, normalize, semantic-errors, edge-cases
+├── features/       # Tests per JSON Schema feature: type-system, const-enum, not, pattern, format, anyOf/oneOf, object-properties, data-narrowing, contains-items, dependencies, property-names
+├── conditions/     # Tests for if/then/else resolution, evaluateCondition, resolve-conditions
 ├── merge-engine/   # Tests for the merge engine: types, keywords, enum-const, advanced merges
 ├── bugs/           # Regression tests for specific bug fixes
 ├── integration/    # Import tests (ESM + CJS) and end-to-end integration
@@ -88,10 +89,17 @@ scripts/            # postbuild.ts — rewrites import specifiers for dual ESM/C
 
 ```
 sub, sup → normalize() → getBranchesTyped() → [if branched] per-branch check
-                                              → [if atomic]  evaluateNot() + stripPatternFromSup()
+                                              → [if atomic]  evaluateNot() + stripNotFromSup()
+                                                             + stripPatternFromSup()
                                                              → engine.merge(sub, sup)
                                                              → normalize(merged)
                                                              → deepEqual(merged, sub) → boolean
+
+With options (condition resolution):
+sub, sup, options → resolveConditions(sub, subData)
+                  → resolveConditions(sup, supData)
+                  → narrowSchemaWithData(resolvedSub, subData, resolvedSup)
+                  → checkInternal(narrowedSub, resolvedSup)
 ```
 
 ### Key Design Decisions — Follow These
@@ -170,7 +178,7 @@ describe("featureName", () => {
 6. **Do NOT use `JSON.stringify` for schema comparison.** Use `deepEqual()` from `utils.ts`.
 7. **Do NOT ignore `null` returns** from `isPatternSubset()` or `isFormatSubset()`. They indicate uncertainty, not failure.
 8. **Do NOT nest ternaries.** Use early returns or if/else chains for readability.
-9. **Do NOT create circular dependencies** between `src/` modules. The dependency graph flows: `index → facade → subset-checker → merge-engine/normalizer/semantic-errors → utils`.
+9. **Do NOT create circular dependencies** between `src/` modules. The dependency graph flows: `index → facade → subset-checker/condition-resolver/data-narrowing → merge-engine/normalizer/semantic-errors → utils`.
 
 ## Adding New Features Checklist
 

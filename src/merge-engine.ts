@@ -42,7 +42,7 @@ import { deepEqual, hasOwn, isPlainObj } from "./utils";
  * Cas 2 — const vs enum : un schema a `const`, l'autre a `enum`.
  *   Si la valeur de `const` n'est pas dans l'`enum` → intersection vide.
  *
- * Utilise `lodash/isEqual` pour la comparaison profonde (objets, tableaux).
+ * Uses `deepEqual` from `utils.ts` for deep comparison (objects, arrays).
  */
 function hasConstConflict(
 	a: JSONSchema7Definition,
