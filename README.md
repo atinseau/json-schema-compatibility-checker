@@ -39,6 +39,7 @@ Cette librairie répond à cette question en vérifiant si un schema est un **so
 - ✅ Accumule des schemas séquentiellement via deep spread (`overlay`)
 - ✅ Résout les conditions `if/then/else` avec des données discriminantes
 - ✅ Gère `anyOf`, `oneOf`, `not`, `format`, `pattern`, `dependencies`, etc.
+- ✅ Gère `oneOf`/`anyOf` imbriqués dans les propriétés d'objets et les items de tableaux
 - ✅ Compare des patterns regex par échantillonnage
 - ✅ Fournit un formatage lisible des résultats pour le debug
 
@@ -233,6 +234,7 @@ engine.overlay(node1Output, node2Output);
 - **`if/then/else`** : nécessite des données discriminantes via `check(sub, sup, { subData })`
 - **`$ref`** : non supporté — les schemas doivent être pré-déréférencés
 - **`patternProperties`** : support partiel
+- **Nested branching fallback** : le fallback propriété-par-propriété pour `oneOf`/`anyOf` imbriqués ne vérifie pas les mots-clés au niveau objet (`minProperties`/`maxProperties`) — ceux-ci sont gérés par le merge quand le branching n'est pas impliqué
 
 👉 Détails et exemples dans **[Limitations connues](./docs/limitations.md)**.
 

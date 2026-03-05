@@ -60,7 +60,7 @@ src/
 ├── json-schema-compatibility-checker.ts  # Main facade class (JsonSchemaCompatibilityChecker)
 ├── types.ts                          # Public interfaces: SubsetResult, SchemaError, ResolvedConditionResult
 ├── merge-engine.ts                   # MergeEngine: allOf merge (intersection) + overlay (deep spread) + conflict detection (wraps @x0k/json-schema-merge)
-├── subset-checker.ts                 # Core subset logic: isAtomicSubsetOf, evaluateNot, getBranchesTyped, checkAtomic/Branched
+├── subset-checker.ts                 # Core subset logic: isAtomicSubsetOf, evaluateNot, getBranchesTyped, checkAtomic/Branched, nested branching fallback (hasNestedBranching, isPropertySubsetOf, isObjectSubsetByProperties, tryNestedBranchingFallback)
 ├── normalizer.ts                     # Schema normalizer: infer type from const/enum, double-negation resolution, recursive normalization
 ├── condition-resolver.ts             # if/then/else resolution with discriminant data, allOf condition handling
 ├── data-narrowing.ts                 # Narrows a schema using runtime data when the target has enum/const constraints
@@ -94,6 +94,11 @@ sub, sup → normalize() → getBranchesTyped() → [if branched] per-branch che
                                                              → engine.merge(sub, sup)
                                                              → normalize(merged)
                                                              → deepEqual(merged, sub) → boolean
+                                                             → [if false] tryNestedBranchingFallback()
+                                                                → hasNestedBranching() guard
+                                                                → isObjectSubsetByProperties()
+                                                                   → per-property isPropertySubsetOf()
+                                                                      → getBranchesTyped() + isAtomicSubsetOf()
 
 With options (condition resolution):
 sub, sup, options → resolveConditions(sub, subData)
@@ -101,6 +106,19 @@ sub, sup, options → resolveConditions(sub, subData)
                   → narrowSchemaWithData(resolvedSub, subData, resolvedSup)
                   → checkInternal(narrowedSub, resolvedSup)
 ```
+
+### Nested Branching Fallback
+
+The merge engine (`@x0k/json-schema-merge`) cannot distribute `allOf` over `oneOf`/`anyOf` inside object properties or array items. When `merge(sub, sup)` fails (returns `null` or produces a result ≠ sub) and either schema contains `oneOf`/`anyOf` nested inside `properties` or `items`, the subset checker falls back to a **property-by-property comparison** that reuses the existing branching logic on each sub-schema individually.
+
+Four helpers in `subset-checker.ts`:
+
+| Helper | Purpose |
+|---|---|
+| `hasNestedBranching(schema)` | Cheap guard — detects `oneOf`/`anyOf` inside `properties` or `items`. The fallback only triggers when this returns `true`, so zero overhead on normal schemas. |
+| `isPropertySubsetOf(sub, sup, engine)` | Compares a single property sub-schema handling branches on **both** sides. Extracts sub branches and verifies each one against sup via `isAtomicSubsetOf`. |
+| `isObjectSubsetByProperties(sub, sup, engine)` | The fallback: checks type compatibility, `required` inclusion, `additionalProperties` constraints, then iterates over each property pair using `isPropertySubsetOf`. Also handles array `items`. |
+| `tryNestedBranchingFallback(sub, sup, engine)` | Single entry point that encapsulates the guard + call. Returns `true`/`false`/`null` (`null` = not applicable). Used at every fallback site in `isAtomicSubsetOf` and `checkAtomic`. |
 
 ### MergeEngine: Two Operations, Two Semantics
 
@@ -136,6 +154,7 @@ const converged = engine.merge(pathAContext, pathBContext);
 5. **No `$ref` support.** The library does NOT resolve `$ref`. Do not attempt to add `$ref` resolution without explicit instruction.
 6. **Facade pattern.** `JsonSchemaCompatibilityChecker` is a thin orchestrator. Core logic lives in the sub-modules. Add new logic to the appropriate sub-module, not to the facade.
 7. **Intersection ≠ Overlay.** Do NOT use `merge`/`mergeOrThrow` for sequential context accumulation — it silently swallows widening overrides (intersection keeps the narrowest). Use `overlay` instead. Do NOT use `overlay` for subset checking — it has no set-theoretic meaning.
+8. **Nested branching fallback.** When the merge-based check fails and either schema has `oneOf`/`anyOf` inside `properties` or `items`, the subset checker falls back to property-by-property comparison. This is triggered automatically — no caller intervention needed. The fallback is guarded by `hasNestedBranching()` to avoid overhead on normal schemas.
 
 ## Code Conventions
 
@@ -223,6 +242,7 @@ describe("featureName", () => {
 - **`$ref`**: Not supported. Schemas must be pre-dereferenced.
 - **`patternProperties`**: Partial support only.
 - **`overlay` is property-level only**: `overlay` deep-spreads `properties` of object schemas recursively. It does NOT deep-spread `patternProperties`, `dependencies` (schema form), or `items` — those use override-wins at the keyword level. This matches runtime spread semantics where only named properties are merged key-by-key.
+- **Nested branching fallback scope**: The property-by-property fallback for nested `oneOf`/`anyOf` does NOT check object-level keywords like `minProperties`/`maxProperties` — those are rare in practice and are already handled by the merge when branching isn't involved. The fallback covers `properties`, `required`, `additionalProperties`, and array `items`.
 
 ## Trust These Instructions
 

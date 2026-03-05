@@ -593,6 +593,219 @@ function stripPatternFromSup(
 	return result;
 }
 
+// ─── Nested branching fallback ───────────────────────────────────────────────
+//
+// The merge engine (`@x0k/json-schema-merge`) cannot resolve `allOf` over
+// `oneOf`/`anyOf` inside properties — it either throws or produces garbage
+// like `{ type: "string", oneOf: [...] }`.
+//
+// When the merge-based check fails (null or merged ≠ sub), and either schema
+// contains `oneOf`/`anyOf` inside its properties or items, we fall back to a
+// **property-by-property** comparison that uses the existing branching logic
+// (`getBranchesTyped` / `isAtomicSubsetOf`) on each sub-schema individually.
+//
+// Three helpers:
+//   1. `hasNestedBranching` — guard: does a schema contain oneOf/anyOf in
+//      properties or items? Avoids triggering the fallback on normal schemas.
+//   2. `isPropertySubsetOf` — compares a single property sub-schema handling
+//      branches on both sides (sub may have oneOf, sup may have oneOf).
+//   3. `isObjectSubsetByProperties` — the fallback itself: iterates over
+//      object properties + items and delegates to `isPropertySubsetOf`.
+//   4. `tryNestedBranchingFallback` — the single entry point called from
+//      `isAtomicSubsetOf` and `checkAtomic`. Encapsulates the guard check
+//      and the call, returning `boolean | null` (null = not applicable).
+
+/**
+ * Returns `true` if the schema contains `oneOf`/`anyOf` inside its
+ * `properties` or `items`. Recurses into nested object schemas.
+ *
+ * This is a cheap guard so we only attempt the property-by-property
+ * fallback when the merge failure is plausibly caused by nested branching.
+ */
+function hasNestedBranching(schema: JSONSchema7Definition): boolean {
+	if (typeof schema === "boolean") return false;
+
+	if (isPlainObj(schema.properties)) {
+		const props = schema.properties as Record<string, JSONSchema7Definition>;
+		for (const key of Object.keys(props)) {
+			const prop = props[key];
+			if (prop === undefined || typeof prop === "boolean") continue;
+			if (hasOwn(prop, "oneOf") || hasOwn(prop, "anyOf")) return true;
+			if (hasNestedBranching(prop)) return true;
+		}
+	}
+
+	if (isPlainObj(schema.items) && typeof schema.items !== "boolean") {
+		const items = schema.items as JSONSchema7;
+		if (hasOwn(items, "oneOf") || hasOwn(items, "anyOf")) return true;
+		if (hasNestedBranching(items)) return true;
+	}
+
+	return false;
+}
+
+/**
+ * Checks `sub ⊆ sup` for a single property sub-schema, handling branches
+ * on **both** sides.
+ *
+ * `isAtomicSubsetOf` only extracts branches from `sup`. When `sub` also
+ * has `oneOf`/`anyOf`, we extract sub's branches and verify that **every**
+ * branch is accepted by sup (same semantics as `checkBranchedSub`).
+ */
+function isPropertySubsetOf(
+	sub: JSONSchema7Definition,
+	sup: JSONSchema7Definition,
+	engine: MergeEngine,
+): boolean {
+	const { branches: subBranches } = getBranchesTyped(sub);
+
+	if (subBranches.length > 1 || subBranches[0] !== sub) {
+		for (const branch of subBranches) {
+			if (branch === undefined) continue;
+			if (!isAtomicSubsetOf(branch, sup, engine)) return false;
+		}
+		return true;
+	}
+
+	return isAtomicSubsetOf(sub, sup, engine);
+}
+
+/**
+ * Checks `sub ⊆ sup` by comparing object properties (and array items)
+ * individually, using the full branching-aware logic.
+ *
+ * This is a **fallback** for when the merge-based check fails due to
+ * `oneOf`/`anyOf` inside properties. It does NOT check object-level
+ * keywords like `minProperties`/`maxProperties` — those are rare in
+ * practice and are already handled correctly by the merge when the
+ * branching isn't involved.
+ *
+ * @returns `true` if sub ⊆ sup, `false` otherwise.
+ */
+function isObjectSubsetByProperties(
+	sub: JSONSchema7,
+	sup: JSONSchema7,
+	engine: MergeEngine,
+): boolean {
+	const subIsObj = sub.type === "object" || isPlainObj(sub.properties);
+	const supIsObj = sup.type === "object" || isPlainObj(sup.properties);
+
+	// ── Array path: both are arrays with items ──
+	if (!subIsObj && !supIsObj) {
+		if (
+			sub.type === "array" &&
+			sup.type === "array" &&
+			isPlainObj(sub.items) &&
+			isPlainObj(sup.items)
+		) {
+			return isPropertySubsetOf(
+				sub.items as JSONSchema7Definition,
+				sup.items as JSONSchema7Definition,
+				engine,
+			);
+		}
+		return false;
+	}
+
+	// Both must look like objects
+	if (!subIsObj || !supIsObj) return false;
+
+	// ── Type compatibility ──
+	if (hasOwn(sub, "type") && hasOwn(sup, "type") && sub.type !== sup.type) {
+		return false;
+	}
+
+	const subProps = (isPlainObj(sub.properties) ? sub.properties : {}) as Record<
+		string,
+		JSONSchema7Definition
+	>;
+	const supProps = (isPlainObj(sup.properties) ? sup.properties : {}) as Record<
+		string,
+		JSONSchema7Definition
+	>;
+	const subRequired = Array.isArray(sub.required)
+		? (sub.required as string[])
+		: [];
+	const supRequired = Array.isArray(sup.required)
+		? (sup.required as string[])
+		: [];
+
+	// ── Required: every key sup requires, sub must also require ──
+	for (const key of supRequired) {
+		if (!subRequired.includes(key)) return false;
+	}
+
+	// ── additionalProperties: false on sup ──
+	if (sup.additionalProperties === false) {
+		for (const key of Object.keys(subProps)) {
+			if (!hasOwn(supProps, key)) return false;
+		}
+	}
+
+	// ── Property-by-property check ──
+	for (const key of Object.keys(supProps)) {
+		const supProp = supProps[key];
+		const subProp = subProps[key];
+		if (supProp === undefined || subProp === undefined) continue;
+
+		if (!isPropertySubsetOf(subProp, supProp, engine)) {
+			return false;
+		}
+	}
+
+	// ── Sub's extra properties vs sup's additionalProperties schema ──
+	if (
+		isPlainObj(sup.additionalProperties) &&
+		typeof sup.additionalProperties !== "boolean"
+	) {
+		const addPropSchema = sup.additionalProperties as JSONSchema7Definition;
+		for (const key of Object.keys(subProps)) {
+			if (hasOwn(supProps, key)) continue;
+			const subProp = subProps[key];
+			if (subProp === undefined) continue;
+			if (!isPropertySubsetOf(subProp, addPropSchema, engine)) {
+				return false;
+			}
+		}
+	}
+
+	// ── Items (object schema that also has array items) ──
+	if (isPlainObj(sub.items) && isPlainObj(sup.items)) {
+		if (
+			!isPropertySubsetOf(
+				sub.items as JSONSchema7Definition,
+				sup.items as JSONSchema7Definition,
+				engine,
+			)
+		) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Attempts the property-by-property fallback when a merge-based check
+ * fails and nested branching is detected.
+ *
+ * Encapsulates the guard (`hasNestedBranching`) and the call to
+ * `isObjectSubsetByProperties` so callers don't repeat the pattern.
+ *
+ * @returns `true` if the fallback confirms sub ⊆ sup, `false` if it
+ *          confirms sub ⊄ sup, `null` if the fallback is not applicable
+ *          (neither schema has nested branching, or schemas are booleans).
+ */
+function tryNestedBranchingFallback(
+	sub: JSONSchema7Definition,
+	sup: JSONSchema7Definition,
+	engine: MergeEngine,
+): boolean | null {
+	if (typeof sub === "boolean" || typeof sup === "boolean") return null;
+	if (!hasNestedBranching(sub) && !hasNestedBranching(sup)) return null;
+	return isObjectSubsetByProperties(sub, sup, engine);
+}
+
 // ─── Atomic subset check ─────────────────────────────────────────────────────
 
 /**
@@ -610,6 +823,10 @@ function stripPatternFromSup(
  * retire le pattern de sup avant le merge (même stratégie que pour `not`).
  *
  * Principe : merge(sub, sup) ≡ sub → sub est un sous-ensemble de sup.
+ *
+ * When the merge-based check fails and either sub or sup contains nested
+ * `oneOf`/`anyOf` in properties or items, falls back to a property-by-property
+ * comparison via `isObjectSubsetByProperties`.
  *
  * Utilise `_.some`, `_.has`, `_.omit`, `_.keys`, `_.isEmpty` pour la logique.
  */
@@ -695,7 +912,10 @@ export function isAtomicSubsetOf(
 		}
 
 		const merged = engine.merge(sub, effectiveSup);
-		if (merged === null) return false;
+		if (merged === null) {
+			// ── Fallback: property-by-property for nested oneOf/anyOf ──
+			return tryNestedBranchingFallback(sub, effectiveSup, engine) ?? false;
+		}
 		// Fast path: if merged is already structurally equal to sub,
 		// skip normalize entirely. This is the common case when sub ⊆ sup
 		// (A ∩ B = A), saving O(n) normalize traversal on wide schemas.
@@ -703,9 +923,17 @@ export function isAtomicSubsetOf(
 		// Slow path: normalize to eliminate merge artifacts (e.g. redundant
 		// enum when const is present), then compare.
 		const normalizedMerged = normalize(merged);
-		return (
-			deepEqual(normalizedMerged, sub) || engine.isEqual(normalizedMerged, sub)
-		);
+		if (
+			deepEqual(normalizedMerged, sub) ||
+			engine.isEqual(normalizedMerged, sub)
+		) {
+			return true;
+		}
+
+		// ── Fallback: merged ≠ sub but nested branching may explain it ──
+		// The merge engine preserves oneOf/anyOf as-is inside properties
+		// (e.g. merge produces {type:"string", oneOf:[...]} ≠ sub).
+		return tryNestedBranchingFallback(sub, effectiveSup, engine) ?? false;
 	}
 
 	// anyOf/oneOf dans sup → au moins une branche doit accepter sub
@@ -749,13 +977,22 @@ export function isAtomicSubsetOf(
 		}
 
 		const merged = engine.merge(sub, effectiveBranch);
-		if (merged === null) return false;
+		if (merged === null) {
+			// Fallback for nested branching within branches
+			return tryNestedBranchingFallback(sub, effectiveBranch, engine) === true;
+		}
 		// Fast path: skip normalize if merged already equals sub
 		if (deepEqual(merged, sub)) return true;
 		const normalizedBranch = normalize(merged);
-		return (
-			deepEqual(normalizedBranch, sub) || engine.isEqual(normalizedBranch, sub)
-		);
+		if (
+			deepEqual(normalizedBranch, sub) ||
+			engine.isEqual(normalizedBranch, sub)
+		) {
+			return true;
+		}
+
+		// Fallback: merged ≠ sub but nested branching may explain it
+		return tryNestedBranchingFallback(sub, effectiveBranch, engine) === true;
 	});
 }
 
@@ -887,9 +1124,19 @@ export function checkAtomic(
 			return { isSubset: true, merged: normalizedMerged, errors: [] };
 		}
 
+		// ── Fallback: property-by-property for nested oneOf/anyOf ──
+		if (tryNestedBranchingFallback(sub, effectiveSup, engine) === true) {
+			return { isSubset: true, merged: sub, errors: [] };
+		}
+
 		const errors = computeSemanticErrors(sub, sup, "");
 		return { isSubset: false, merged: normalizedMerged, errors };
 	} catch (_e) {
+		// ── Fallback: property-by-property for nested oneOf/anyOf ──
+		if (tryNestedBranchingFallback(sub, effectiveSup, engine) === true) {
+			return { isSubset: true, merged: sub, errors: [] };
+		}
+
 		const errors = computeSemanticErrors(sub, sup, "");
 		return {
 			isSubset: false,

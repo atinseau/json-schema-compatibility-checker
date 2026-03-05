@@ -17,6 +17,7 @@ Cette section présente les fonctionnalités supportées, du plus simple au plus
 - [7. `additionalProperties`](#7-additionalproperties)
 - [8. Objets imbriqués](#8-objets-imbriqués)
 - [9. `anyOf` / `oneOf`](#9-anyof--oneof)
+- [9b. `oneOf`/`anyOf` imbriqués dans les propriétés](#9b-oneofanyof-imbriqués-dans-les-propriétés)
 - [10. Négation (`not`)](#10-négation-not)
 - [11. Formats (`format`)](#11-formats-format)
 - [12. Patterns regex (`pattern`)](#12-patterns-regex-pattern)
@@ -405,6 +406,215 @@ checker.isSubset(sub, sup); // true
 ```
 
 > **Note** : La librairie ne vérifie **pas** l'exclusivité sémantique de `oneOf` (le fait qu'exactement une branche doit matcher). Elle traite `oneOf` comme `anyOf` pour la vérification de sous-ensemble.
+
+---
+
+## 9b. `oneOf`/`anyOf` imbriqués dans les propriétés
+
+Quand `oneOf`/`anyOf` apparaît **à l'intérieur** des propriétés d'un objet ou des items d'un tableau (et non au niveau racine), le merge engine ne peut pas distribuer `allOf` sur ces branches. La librairie détecte automatiquement cette situation et utilise un **fallback propriété-par-propriété** qui réutilise la logique de branching existante sur chaque sous-schema individuellement.
+
+### Type concret ⊆ propriété avec `oneOf`/`anyOf`
+
+```ts
+// obj{ payload: string } ⊆ obj{ payload: oneOf(string, number) }
+checker.isSubset(
+  {
+    type: "object",
+    properties: { payload: { type: "string" } },
+    required: ["payload"],
+  },
+  {
+    type: "object",
+    properties: {
+      payload: { oneOf: [{ type: "string" }, { type: "number" }] },
+    },
+    required: ["payload"],
+  }
+); // true ✅
+
+// obj{ retry: integer } ⊆ obj{ retry: anyOf(number, null) }
+checker.isSubset(
+  {
+    type: "object",
+    properties: { retryCount: { type: "integer" } },
+    required: ["retryCount"],
+  },
+  {
+    type: "object",
+    properties: {
+      retryCount: { anyOf: [{ type: "number" }, { type: "null" }] },
+    },
+    required: ["retryCount"],
+  }
+); // true ✅ — integer ⊂ number
+```
+
+### `oneOf`/`anyOf` identiques des deux côtés
+
+```ts
+// obj{ result: oneOf(s,n) } ⊆ obj{ result: oneOf(s,n) }
+const schema = {
+  type: "object",
+  properties: {
+    result: { oneOf: [{ type: "string" }, { type: "number" }] },
+  },
+  required: ["result"],
+};
+checker.isSubset(schema, schema); // true ✅
+```
+
+### Branches sub ⊆ branches sup
+
+```ts
+// obj{ v: oneOf(string) } ⊆ obj{ v: oneOf(string, number) }
+checker.isSubset(
+  {
+    type: "object",
+    properties: { v: { oneOf: [{ type: "string" }] } },
+    required: ["v"],
+  },
+  {
+    type: "object",
+    properties: {
+      v: { oneOf: [{ type: "string" }, { type: "number" }] },
+    },
+    required: ["v"],
+  }
+); // true ✅
+
+// obj{ v: anyOf(s,n) } ⊄ obj{ v: anyOf(string) } — sup est plus étroit
+checker.isSubset(
+  {
+    type: "object",
+    properties: {
+      v: { anyOf: [{ type: "string" }, { type: "number" }] },
+    },
+    required: ["v"],
+  },
+  {
+    type: "object",
+    properties: { v: { anyOf: [{ type: "string" }] } },
+    required: ["v"],
+  }
+); // false ❌
+```
+
+### Dans les items de tableaux
+
+```ts
+// obj{ items: array<string> } ⊆ obj{ items: array<oneOf(string, number)> }
+checker.isSubset(
+  {
+    type: "object",
+    properties: {
+      items: { type: "array", items: { type: "string" } },
+    },
+    required: ["items"],
+  },
+  {
+    type: "object",
+    properties: {
+      items: {
+        type: "array",
+        items: { oneOf: [{ type: "string" }, { type: "number" }] },
+      },
+    },
+    required: ["items"],
+  }
+); // true ✅
+```
+
+### Objets profondément imbriqués
+
+```ts
+// obj{ nested: obj{ v: string } } ⊆ obj{ nested: obj{ v: oneOf(s,n) } }
+checker.isSubset(
+  {
+    type: "object",
+    properties: {
+      nested: {
+        type: "object",
+        properties: { v: { type: "string" } },
+        required: ["v"],
+      },
+    },
+    required: ["nested"],
+  },
+  {
+    type: "object",
+    properties: {
+      nested: {
+        type: "object",
+        properties: {
+          v: { oneOf: [{ type: "string" }, { type: "number" }] },
+        },
+        required: ["v"],
+      },
+    },
+    required: ["nested"],
+  }
+); // true ✅
+```
+
+### Propriétés multiples avec branching mixte
+
+```ts
+// obj{ a: string, b: number } ⊆ obj{ a: oneOf(s,n), b: anyOf(n,null) }
+checker.isSubset(
+  {
+    type: "object",
+    properties: { a: { type: "string" }, b: { type: "number" } },
+    required: ["a", "b"],
+  },
+  {
+    type: "object",
+    properties: {
+      a: { oneOf: [{ type: "string" }, { type: "number" }] },
+      b: { anyOf: [{ type: "number" }, { type: "null" }] },
+    },
+    required: ["a", "b"],
+  }
+); // true ✅
+
+// obj{ a: string, b: boolean } ⊄ obj{ a: oneOf(s,n), b: anyOf(n,null) } — b ne matche pas
+checker.isSubset(
+  {
+    type: "object",
+    properties: { a: { type: "string" }, b: { type: "boolean" } },
+    required: ["a", "b"],
+  },
+  {
+    type: "object",
+    properties: {
+      a: { oneOf: [{ type: "string" }, { type: "number" }] },
+      b: { anyOf: [{ type: "number" }, { type: "null" }] },
+    },
+    required: ["a", "b"],
+  }
+); // false ❌
+```
+
+### Branches avec contraintes
+
+```ts
+// obj{ v: {type:string, minLength:3} } ⊆ obj{ v: anyOf({type:string, minLength:1}, {type:number}) }
+checker.isSubset(
+  {
+    type: "object",
+    properties: { v: { type: "string", minLength: 3 } },
+    required: ["v"],
+  },
+  {
+    type: "object",
+    properties: {
+      v: { anyOf: [{ type: "string", minLength: 1 }, { type: "number" }] },
+    },
+    required: ["v"],
+  }
+); // true ✅ — minLength:3 ⊆ minLength:1
+```
+
+> **Note** : Ce fallback est activé automatiquement uniquement quand le merge échoue et que `oneOf`/`anyOf` est détecté dans les `properties` ou `items`. Il n'y a aucun overhead sur les schemas sans branching imbriqué. Le fallback ne vérifie pas les mots-clés au niveau objet (`minProperties`/`maxProperties`) — ceux-ci sont gérés par le merge quand le branching n'est pas impliqué.
 
 ---
 
