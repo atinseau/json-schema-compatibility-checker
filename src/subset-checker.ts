@@ -593,6 +593,70 @@ function stripPatternFromSup(
 	return result;
 }
 
+// ─── Vacuous false-property stripping ────────────────────────────────────────
+//
+// In JSON Schema, `properties: { x: false }` means "if x is present, it must
+// validate against `false` (impossible)". If x is **absent** from the instance,
+// the constraint is **trivially satisfied** (vacuous truth).
+//
+// After merge(sub, sup), the merge engine may add `false`-schema properties
+// from sup into the merged result even when sub doesn't define those properties.
+// This causes `deepEqual(merged, sub)` to fail — a false negative.
+//
+// `stripVacuousFalseProperties` removes those vacuously-satisfied `false`
+// properties from `merged` so that the structural comparison succeeds.
+
+/**
+ * Strips `false`-schema properties from `merged` that are absent in `sub`.
+ *
+ * A property `{ key: false }` in merged that doesn't exist in sub's properties
+ * is vacuously satisfied — sub never produces that key, so the "impossible"
+ * constraint has no effect. Removing it lets `deepEqual(merged, sub)` succeed.
+ *
+ * @returns A new schema with vacuous `false` properties removed, or the
+ *          original `merged` if no stripping was needed.
+ */
+function stripVacuousFalseProperties(
+	merged: JSONSchema7Definition,
+	sub: JSONSchema7Definition,
+): JSONSchema7Definition {
+	if (typeof merged === "boolean" || typeof sub === "boolean") return merged;
+	if (!isPlainObj(merged.properties)) return merged;
+
+	const mergedProps = merged.properties as Record<
+		string,
+		JSONSchema7Definition
+	>;
+	const subProps = (isPlainObj(sub.properties) ? sub.properties : {}) as Record<
+		string,
+		JSONSchema7Definition
+	>;
+
+	let strippedProps: Record<string, JSONSchema7Definition> | null = null;
+
+	for (const key of Object.keys(mergedProps)) {
+		if (mergedProps[key] === false && !hasOwn(subProps, key)) {
+			// Lazily copy on first strip
+			if (strippedProps === null) {
+				strippedProps = { ...mergedProps };
+			}
+			delete strippedProps[key];
+		}
+	}
+
+	if (strippedProps === null) return merged;
+
+	// Return a new schema with the cleaned properties
+	const result = { ...merged, properties: strippedProps };
+
+	// If properties is now empty and sub doesn't have properties, remove it
+	if (Object.keys(strippedProps).length === 0 && !isPlainObj(sub.properties)) {
+		delete (result as Record<string, unknown>).properties;
+	}
+
+	return result;
+}
+
 // ─── Nested branching fallback ───────────────────────────────────────────────
 //
 // The merge engine (`@x0k/json-schema-merge`) cannot resolve `allOf` over
@@ -920,9 +984,17 @@ export function isAtomicSubsetOf(
 		// skip normalize entirely. This is the common case when sub ⊆ sup
 		// (A ∩ B = A), saving O(n) normalize traversal on wide schemas.
 		if (deepEqual(merged, sub)) return true;
+
+		// Strip vacuously-satisfied `false` properties added by the merge
+		// from sup but absent in sub (vacuous truth: absent ⊆ forbidden).
+		const strippedMerged = stripVacuousFalseProperties(merged, sub);
+		if (strippedMerged !== merged && deepEqual(strippedMerged, sub)) {
+			return true;
+		}
+
 		// Slow path: normalize to eliminate merge artifacts (e.g. redundant
 		// enum when const is present), then compare.
-		const normalizedMerged = normalize(merged);
+		const normalizedMerged = normalize(strippedMerged);
 		if (
 			deepEqual(normalizedMerged, sub) ||
 			engine.isEqual(normalizedMerged, sub)
@@ -983,7 +1055,14 @@ export function isAtomicSubsetOf(
 		}
 		// Fast path: skip normalize if merged already equals sub
 		if (deepEqual(merged, sub)) return true;
-		const normalizedBranch = normalize(merged);
+
+		// Strip vacuously-satisfied `false` properties (see comment above)
+		const strippedBranch = stripVacuousFalseProperties(merged, sub);
+		if (strippedBranch !== merged && deepEqual(strippedBranch, sub)) {
+			return true;
+		}
+
+		const normalizedBranch = normalize(strippedBranch);
 		if (
 			deepEqual(normalizedBranch, sub) ||
 			engine.isEqual(normalizedBranch, sub)
@@ -1115,7 +1194,14 @@ export function checkAtomic(
 			return { isSubset: true, merged, errors: [] };
 		}
 
-		const normalizedMerged = normalize(merged);
+		// Strip vacuously-satisfied `false` properties added by the merge
+		// from sup but absent in sub (vacuous truth: absent ⊆ forbidden).
+		const strippedMerged = stripVacuousFalseProperties(merged, sub);
+		if (strippedMerged !== merged && deepEqual(strippedMerged, sub)) {
+			return { isSubset: true, merged: strippedMerged, errors: [] };
+		}
+
+		const normalizedMerged = normalize(strippedMerged);
 
 		if (
 			deepEqual(normalizedMerged, sub) ||
