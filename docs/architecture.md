@@ -26,8 +26,12 @@ La librairie est organisée en modules spécialisés, orchestrés par la façade
 │  │ - overlay    │  │ - evaluateNot            │  │
 │  │   (deep spread│  │ - stripNotFromSup        │  │
 │  │    last wins) │  │ - stripPatternFromSup    │  │
-│  │ - Conflict   │  └──────────────────────────┘  │
-│  │   detection  │                                │
+│  │ - Conflict   │  │ - Nested branching       │  │
+│  │   detection  │  │   fallback (property-by- │  │
+│  │              │  │   property for oneOf/    │  │
+│  │              │  │   anyOf in properties    │  │
+│  │              │  │   and items)             │  │
+│  │              │  └──────────────────────────┘  │
 │  │ - Compare    │  ┌──────────────────────────┐  │
 │  └──────────────┘  │    Pattern Subset         │  │
 │                     │                          │  │
@@ -104,7 +108,22 @@ Vérification de compatibilité :
    e. normalize(merged)
    f. engine.isEqual(normalized_sub, normalized_merged) ?
       → true: sub ⊆ sup ✅
-      → false: compute diffs, sub ⊄ sup ❌
+      → false: tryNestedBranchingFallback() ↓
+
+4. Nested branching fallback (when merge fails or merged ≠ sub):
+   a. hasNestedBranching(sub) || hasNestedBranching(sup) ?
+      → false: not applicable, return sub ⊄ sup ❌
+      → true: continue ↓
+   b. isObjectSubsetByProperties(sub, sup):
+      - Check type compatibility
+      - Check required inclusion (sup.required ⊆ sub.required)
+      - Check additionalProperties constraints
+      - For each property pair: isPropertySubsetOf(subProp, supProp)
+        → Extract branches from both sides via getBranchesTyped()
+        → Each sub branch must pass isAtomicSubsetOf(branch, sup)
+      - For array items: isPropertySubsetOf(sub.items, sup.items)
+      → true: sub ⊆ sup ✅
+      → false: sub ⊄ sup ❌
 ```
 
 ---
