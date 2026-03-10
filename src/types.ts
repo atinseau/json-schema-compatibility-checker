@@ -1,5 +1,16 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 
+// ─── Module augmentation ─────────────────────────────────────────────────────
+// Extends JSONSchema7 with the custom `constraints` keyword so that consumers
+// of this package see the property on every JSONSchema7 without needing a
+// separate ambient file or `/// <reference>` directive.
+
+declare module "json-schema" {
+	interface JSONSchema7 {
+		constraints?: Constraints;
+	}
+}
+
 // ─── Public types ────────────────────────────────────────────────────────────
 
 export interface SchemaError {
