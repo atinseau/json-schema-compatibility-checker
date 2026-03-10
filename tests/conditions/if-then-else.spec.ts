@@ -526,7 +526,7 @@ describe("if/then/else — pure subset check (no data)", () => {
 		expect(result).toBe(false); // FALSE NEGATIVE — would be true with anyOf expansion
 	});
 
-	test("checkResolved FIXES the false negative when data is provided", () => {
+	test("checkResolved FIXES the false negative when data is provided", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -537,7 +537,7 @@ describe("if/then/else — pure subset check (no data)", () => {
 		};
 
 		// data must be a complete runtime instance that validates against both schemas
-		const result = checker.check(sub, conditionalSchema, {
+		const result = await checker.check(sub, conditionalSchema, {
 			data: { kind: "text", value: "hello" },
 		});
 		expect(result.isSubset).toBe(true);

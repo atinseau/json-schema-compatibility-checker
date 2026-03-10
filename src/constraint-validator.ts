@@ -23,12 +23,12 @@ import { hasOwn, isPlainObj, toConstraintArray } from "./utils.ts";
  * @param path - The property path for error reporting
  * @returns Array of errors (empty if all constraints pass)
  */
-function validateValue(
+async function validateValue(
 	constraints: Constraint[],
 	value: unknown,
 	registry: ConstraintValidatorRegistry,
 	path: string,
-): SchemaError[] {
+): Promise<SchemaError[]> {
 	const errors: SchemaError[] = [];
 
 	for (const constraint of constraints) {
@@ -48,7 +48,7 @@ function validateValue(
 		}
 
 		try {
-			const result = validator(value, params);
+			const result = await validator(value, params);
 			if (!result.valid) {
 				errors.push({
 					key: path || "$root",
@@ -87,12 +87,12 @@ function validateValue(
  * @param path - The current property path (for error reporting)
  * @returns Array of schema errors (empty if all constraints pass)
  */
-export function validateSchemaConstraints(
+export async function validateSchemaConstraints(
 	schema: JSONSchema7Definition,
 	data: unknown,
 	registry: ConstraintValidatorRegistry,
 	path = "",
-): SchemaError[] {
+): Promise<SchemaError[]> {
 	// Boolean schemas → nothing to validate
 	if (typeof schema === "boolean") return [];
 
@@ -101,7 +101,7 @@ export function validateSchemaConstraints(
 	// ── Root-level constraints ──
 	const constraints = toConstraintArray(schema.constraints);
 	if (constraints.length > 0) {
-		errors.push(...validateValue(constraints, data, registry, path));
+		errors.push(...(await validateValue(constraints, data, registry, path)));
 	}
 
 	// ── Recurse into properties ──
@@ -119,7 +119,12 @@ export function validateSchemaConstraints(
 
 			const propPath = path ? `${path}.${key}` : key;
 			errors.push(
-				...validateSchemaConstraints(propSchema, propValue, registry, propPath),
+				...(await validateSchemaConstraints(
+					propSchema,
+					propValue,
+					registry,
+					propPath,
+				)),
 			);
 		}
 	}
@@ -131,7 +136,12 @@ export function validateSchemaConstraints(
 
 		for (let i = 0; i < data.length; i++) {
 			errors.push(
-				...validateSchemaConstraints(itemSchema, data[i], registry, itemPath),
+				...(await validateSchemaConstraints(
+					itemSchema,
+					data[i],
+					registry,
+					itemPath,
+				)),
 			);
 		}
 	}
@@ -144,7 +154,12 @@ export function validateSchemaConstraints(
 			if (itemSchema === undefined) continue;
 			const itemPath = path ? `${path}[${i}]` : `[${i}]`;
 			errors.push(
-				...validateSchemaConstraints(itemSchema, data[i], registry, itemPath),
+				...(await validateSchemaConstraints(
+					itemSchema,
+					data[i],
+					registry,
+					itemPath,
+				)),
 			);
 		}
 	}
@@ -176,12 +191,12 @@ export function validateSchemaConstraints(
 				const dataValue = dataObj[dataKey];
 				const ppPath = path ? `${path}.${dataKey}` : dataKey;
 				errors.push(
-					...validateSchemaConstraints(
+					...(await validateSchemaConstraints(
 						patternSchema,
 						dataValue,
 						registry,
 						ppPath,
-					),
+					)),
 				);
 			}
 		}
@@ -223,7 +238,12 @@ export function validateSchemaConstraints(
 			const dataValue = dataObj[dataKey];
 			const apPath = path ? `${path}.${dataKey}` : dataKey;
 			errors.push(
-				...validateSchemaConstraints(apSchema, dataValue, registry, apPath),
+				...(await validateSchemaConstraints(
+					apSchema,
+					dataValue,
+					registry,
+					apPath,
+				)),
 			);
 		}
 	}
@@ -251,7 +271,9 @@ export function validateSchemaConstraints(
 
 			// Schema-form dependency: validate the entire data object against it
 			// The dependency schema applies to the whole object, not just the dep key
-			errors.push(...validateSchemaConstraints(depValue, data, registry, path));
+			errors.push(
+				...(await validateSchemaConstraints(depValue, data, registry, path)),
+			);
 		}
 	}
 

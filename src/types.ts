@@ -112,18 +112,25 @@ export interface ConstraintValidationResult {
  * Receives the value to validate and optional params defined
  * in the schema's constraint definition.
  *
- * Must be synchronous — async validation is out of scope
- * for this library. Wrap async checks in your application layer.
+ * Can be synchronous or asynchronous. When async validators are used,
+ * `check()` with runtime options returns a `Promise`.
  *
  * @param value - The runtime value to validate
  * @param params - The `params` object from the constraint definition, if any
- * @returns The validation result
+ * @returns The validation result, or a Promise resolving to it
  *
  * @example
  * ```ts
+ * // Synchronous validator
  * const isUuid: ConstraintValidator = (value) => ({
  *   valid: typeof value === "string" && /^[0-9a-f]{8}-/.test(value),
  *   message: "Value must be a valid UUID",
+ * });
+ *
+ * // Async validator
+ * const isUniqueEmail: ConstraintValidator = async (value) => ({
+ *   valid: await checkEmailUniqueness(value as string),
+ *   message: "Email must be unique",
  * });
  *
  * const minAge: ConstraintValidator = (value, params) => ({
@@ -135,7 +142,7 @@ export interface ConstraintValidationResult {
 export type ConstraintValidator = (
 	value: unknown,
 	params?: Record<string, unknown>,
-) => ConstraintValidationResult;
+) => ConstraintValidationResult | Promise<ConstraintValidationResult>;
 
 /**
  * Registry mapping constraint names to their validator functions.

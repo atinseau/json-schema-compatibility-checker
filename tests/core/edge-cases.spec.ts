@@ -161,7 +161,7 @@ describe("edge cases", () => {
 		}
 	});
 
-	test("isSubset and checkResolved agree on resolved schemas", () => {
+	test("isSubset and checkResolved agree on resolved schemas", async () => {
 		const sup: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -182,7 +182,7 @@ describe("edge cases", () => {
 			required: ["kind", "value"],
 		};
 
-		const result = checker.check(sub, sup, {
+		const result = await checker.check(sub, sup, {
 			data: { kind: "text", value: "hello" },
 		});
 		expect(result.isSubset).toBe(
@@ -209,18 +209,20 @@ describe("edge cases", () => {
 
 	// ── data: undefined edge case ────────────────────────────────────────
 
-	test("check with { data: undefined } behaves like static check", () => {
+	test("check with { data: undefined } behaves like static check", async () => {
 		const sub: JSONSchema7 = { type: "string", minLength: 1 };
 		const sup: JSONSchema7 = { type: "string" };
 
 		const staticResult = checker.check(sub, sup);
-		const undefinedDataResult = checker.check(sub, sup, { data: undefined });
+		const undefinedDataResult = await checker.check(sub, sup, {
+			data: undefined,
+		});
 
 		expect(undefinedDataResult.isSubset).toBe(staticResult.isSubset);
 		expect(undefinedDataResult.isSubset).toBe(true);
 	});
 
-	test("check with { data: undefined } does not resolve conditions", () => {
+	test("check with { data: undefined } does not resolve conditions", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: { kind: { const: "text" }, value: { type: "string" } },
@@ -238,17 +240,22 @@ describe("edge cases", () => {
 		// Without data, the conditional sup causes a false negative (known limitation).
 		// data: undefined should produce the same static result, NOT enter the runtime path.
 		const staticResult = checker.check(sub, sup);
-		const undefinedDataResult = checker.check(sub, sup, { data: undefined });
+		const undefinedDataResult = await checker.check(sub, sup, {
+			data: undefined,
+		});
 
 		expect(undefinedDataResult.isSubset).toBe(staticResult.isSubset);
 	});
 
-	test("check with { data: null } — null is validated against both schemas", () => {
+	test("check with { data: null } — null is validated against both schemas", async () => {
 		const sub: JSONSchema7 = { type: "string" };
 		const sup: JSONSchema7 = { type: "string" };
 
 		// null is not a valid string — runtime validation should fail (requires validate: true)
-		const result = checker.check(sub, sup, { data: null, validate: true });
+		const result = await checker.check(sub, sup, {
+			data: null,
+			validate: true,
+		});
 		expect(result.isSubset).toBe(false);
 		expect(result.errors.length).toBeGreaterThan(0);
 
@@ -258,41 +265,41 @@ describe("edge cases", () => {
 		expect(errorKeys.some((k) => k.startsWith("$sup"))).toBe(true);
 	});
 
-	test("check with { data: null } — passes when schemas accept any value", () => {
+	test("check with { data: null } — passes when schemas accept any value", async () => {
 		const sub: JSONSchema7 = {};
 		const sup: JSONSchema7 = {};
 
-		const result = checker.check(sub, sup, { data: null });
+		const result = await checker.check(sub, sup, { data: null });
 		expect(result.isSubset).toBe(true);
 		expect(result.errors).toEqual([]);
 	});
 
-	test("check with primitive data (number) validates correctly", () => {
+	test("check with primitive data (number) validates correctly", async () => {
 		const sub: JSONSchema7 = { type: "number", minimum: 0 };
 		const sup: JSONSchema7 = { type: "number" };
 
-		const r1 = checker.check(sub, sup, { data: 42, validate: true });
+		const r1 = await checker.check(sub, sup, { data: 42, validate: true });
 		expect(r1.isSubset).toBe(true);
 		expect(r1.errors).toEqual([]);
 
-		const r2 = checker.check(sub, sup, { data: "hello", validate: true });
+		const r2 = await checker.check(sub, sup, { data: "hello", validate: true });
 		expect(r2.isSubset).toBe(false);
 		expect(r2.errors.length).toBeGreaterThan(0);
 	});
 
-	test("check with primitive data — conditions with properties are not resolved", () => {
+	test("check with primitive data — conditions with properties are not resolved", async () => {
 		const schema: JSONSchema7 = {
 			type: "string",
 			if: { minLength: 5 },
 			then: { pattern: "^[A-Z]" },
 		};
 
-		const result = checker.check(schema, schema, { data: "HELLO" });
+		const result = await checker.check(schema, schema, { data: "HELLO" });
 		expect(result.isSubset).toBe(true);
 	});
 
-	test("check with boolean schema true and runtime data", () => {
-		const result = checker.check(true, true, { data: "hello" });
+	test("check with boolean schema true and runtime data", async () => {
+		const result = await checker.check(true, true, { data: "hello" });
 		expect(result.isSubset).toBe(true);
 	});
 
@@ -308,7 +315,7 @@ describe("edge cases", () => {
 		).toThrow();
 	});
 
-	test("bidirectional narrowing — both schemas have enum constraints", () => {
+	test("bidirectional narrowing — both schemas have enum constraints", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -326,7 +333,7 @@ describe("edge cases", () => {
 			required: ["color", "size"],
 		};
 
-		const result = checker.check(sub, sup, {
+		const result = await checker.check(sub, sup, {
 			data: { color: "red", size: "M" },
 		});
 		expect(result.isSubset).toBe(true);
@@ -341,7 +348,7 @@ describe("edge cases", () => {
 			required: ["color", "size"],
 		};
 
-		const result2 = checker.check(subWithBothEnums, sup, {
+		const result2 = await checker.check(subWithBothEnums, sup, {
 			data: { color: "red", size: "M" },
 		});
 		expect(result2.isSubset).toBe(true);

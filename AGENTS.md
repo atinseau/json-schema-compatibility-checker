@@ -104,7 +104,7 @@ sub, sup → normalize() → getBranchesTyped() → [if branched] per-branch che
                                                                    → per-property isPropertySubsetOf()
                                                                       → getBranchesTyped() + isAtomicSubsetOf()
 
-With options (runtime mode):
+With options (runtime mode — returns Promise<ResolvedSubsetResult>):
 sub, sup, { data } → resolveConditions(sub, data)          ← uses isDataValidForSchema (AJV)
                     → resolveConditions(sup, data)          ← uses isDataValidForSchema (AJV)
                     → narrowSchemaWithData(resolvedSub, data, resolvedSup)
@@ -113,8 +113,8 @@ sub, sup, { data } → resolveConditions(sub, data)          ← uses isDataVali
                     → [if static check fails] return { isSubset: false, errors }
                     → getRuntimeValidationErrors(narrowedSub, data)  ← AJV validation
                     → getRuntimeValidationErrors(narrowedSup, data)  ← AJV validation
-                    → validateSchemaConstraints(narrowedSub, data, registry)  ← custom constraints
-                    → validateSchemaConstraints(narrowedSup, data, registry)  ← custom constraints
+                    → await validateSchemaConstraints(narrowedSub, data, registry)  ← custom constraints (async)
+                    → await validateSchemaConstraints(narrowedSup, data, registry)  ← custom constraints (async)
                     → [if runtime errors] return { isSubset: false, errors }
                     → [if all pass] return { isSubset: true, ... }
 ```
@@ -134,7 +134,9 @@ Caching strategy: **WeakMap** by schema object reference (primary, zero-cost for
 
 Validates runtime data against the custom `constraints` keyword using a user-provided `ConstraintValidatorRegistry`. Separate from the AJV-based runtime validator (which handles standard JSON Schema keywords) and from `format-validator.ts` (which handles the `format` keyword for static subset checking).
 
-`validateSchemaConstraints(schema, data, registry)` recursively walks into: root-level constraints, `properties`, `patternProperties`, `items` (single + tuple), `additionalProperties` (schema form), `dependencies` (schema form).
+`validateSchemaConstraints(schema, data, registry)` is **async** — it `await`s each constraint validator to support both synchronous and asynchronous validators. It recursively walks into: root-level constraints, `properties`, `patternProperties`, `items` (single + tuple), `additionalProperties` (schema form), `dependencies` (schema form).
+
+Constraint validators (`ConstraintValidator` type) can return either `ConstraintValidationResult` or `Promise<ConstraintValidationResult>`. This allows validators that need I/O (e.g. database uniqueness checks) without requiring the caller to wrap synchronous validators.
 
 ### Nested Branching Fallback
 
@@ -186,6 +188,7 @@ const converged = engine.merge(pathAContext, pathBContext);
 8. **Nested branching fallback.** When the merge-based check fails and either schema has `oneOf`/`anyOf` inside `properties` or `items`, the subset checker falls back to property-by-property comparison. This is triggered automatically — no caller intervention needed. The fallback is guarded by `hasNestedBranching()` to avoid overhead on normal schemas.
 9. **Singleton AJV instance.** `runtime-validator.ts` uses a module-level AJV singleton shared across all `JsonSchemaCompatibilityChecker` instances. This is intentional for performance (compiled validators are reused). AJV is configured with `strict: false` to tolerate unknown keywords like `constraints`. Do NOT create per-instance AJV — it would break the caching strategy.
 10. **Custom constraints are runtime-only.** The `constraints` keyword is **completely ignored** in the static path: `normalize()` strips it from schemas before subset checking, the merge engine does not handle it, and semantic errors never report constraint mismatches. Constraints are only evaluated at runtime via `validateSchemaConstraints()` when `check()` is called with `{ data, validate: true }` and constraint validators are registered. The condition resolver (`mergeBranchInto`) still unions constraints during `if/then/else` resolution so that the resolved schema preserves them for runtime validation. The merge engine and condition resolver share `mergeConstraints` / `toConstraintArray` from `utils.ts`.
+11. **`check()` with options is async.** When `check(sub, sup, options)` is called with `CheckRuntimeOptions`, it returns `Promise<ResolvedSubsetResult>` (not a synchronous result). This is because constraint validators can be async (`ConstraintValidator` returns `ConstraintValidationResult | Promise<ConstraintValidationResult>`). The overload without options (`check(sub, sup)`) remains synchronous and returns `SubsetResult`. Callers must `await` the runtime path.
 
 ## Code Conventions
 
@@ -233,6 +236,15 @@ describe("featureName", () => {
     const sub: JSONSchema7 = { type: "string", minLength: 3 };
     const sup: JSONSchema7 = { type: "string", minLength: 1 };
     expect(checker.isSubset(sub, sup)).toBe(true);
+  });
+
+  // check() with options returns a Promise — use async/await
+  test("runtime check with data", async () => {
+    const result = await checker.check(sub, sup, {
+      data: "hello",
+      validate: true,
+    });
+    expect(result.isSubset).toBe(true);
   });
 });
 ```

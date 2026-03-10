@@ -162,7 +162,7 @@ describe("false-schema properties — present property ⊄ forbidden property", 
 // ── With condition resolution (if/then/else) ─────────────────────────────────
 
 describe("false-schema properties — with if/then condition resolution", () => {
-	test("resolved then adds property: false, absent from sub → isSubset: true", () => {
+	test("resolved then adds property: false, absent from sub → isSubset: true", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: { withAI: { type: "boolean" } },
@@ -184,12 +184,12 @@ describe("false-schema properties — with if/then condition resolution", () => 
 			then: { properties: { title: false } },
 		};
 
-		const result = checker.check(sub, sup, { data: { withAI: true } });
+		const result = await checker.check(sub, sup, { data: { withAI: true } });
 		expect(result.isSubset).toBe(true);
 		expect(result.errors).toHaveLength(0);
 	});
 
-	test("resolved then adds property: false, present in sub → isSubset: false", () => {
+	test("resolved then adds property: false, present in sub → isSubset: false", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -213,13 +213,13 @@ describe("false-schema properties — with if/then condition resolution", () => 
 			then: { properties: { title: false } },
 		};
 
-		const result = checker.check(sub, sup, {
+		const result = await checker.check(sub, sup, {
 			data: { withAI: true, title: "My Article" },
 		});
 		expect(result.isSubset).toBe(false);
 	});
 
-	test("condition not triggered — property stays normal → isSubset: true", () => {
+	test("condition not triggered — property stays normal → isSubset: true", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -244,7 +244,7 @@ describe("false-schema properties — with if/then condition resolution", () => 
 		};
 
 		// withAI: false → condition not triggered → title stays { type: "string" }
-		const result = checker.check(sub, sup, {
+		const result = await checker.check(sub, sup, {
 			data: { withAI: false, title: "My Article" },
 		});
 		expect(result.isSubset).toBe(true);
