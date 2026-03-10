@@ -8,6 +8,32 @@ import {
 import { run } from "./collect";
 
 const checker = new JsonSchemaCompatibilityChecker();
+const checkerWithConstraints = new JsonSchemaCompatibilityChecker({
+	constraints: {
+		IsUuid: (value) => ({
+			valid:
+				typeof value === "string" &&
+				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+					value,
+				),
+			message: "Value must be a valid UUID",
+		}),
+		MinAge: (value, params) => {
+			const min = typeof params?.min === "number" ? params.min : 0;
+			return {
+				valid: typeof value === "number" && value >= min,
+				message: `Value must be at least ${min}`,
+			};
+		},
+		IsCompanyEmail: (value) => ({
+			valid:
+				typeof value === "string" &&
+				value.endsWith("@acme.com") &&
+				value.includes("@"),
+			message: "Value must be a company email",
+		}),
+	},
+});
 const engine = new MergeEngine();
 
 // ─── API Response → Expected Input (compatible) ─────────────────────────────
@@ -416,6 +442,78 @@ const formatIdnHostname: JSONSchema7 = {
 	format: "idn-hostname",
 };
 
+// ─── Runtime constraints scenarios ────────────────────────────────────────────
+
+const constrainedUserOutput: JSONSchema7 = {
+	type: "object",
+	properties: {
+		id: { type: "string", constraints: ["IsUuid"] },
+		age: {
+			type: "number",
+			constraints: [{ name: "MinAge", params: { min: 18 } }],
+		},
+		email: { type: "string", constraints: ["IsCompanyEmail"] },
+	},
+	required: ["id", "age", "email"],
+};
+
+const unconstrainedUserInput: JSONSchema7 = {
+	type: "object",
+	properties: {
+		id: { type: "string" },
+		age: { type: "number" },
+		email: { type: "string" },
+	},
+	required: ["id", "age", "email"],
+};
+
+const validConstrainedUserData = {
+	id: "550e8400-e29b-41d4-a716-446655440000",
+	age: 29,
+	email: "jane@acme.com",
+};
+
+const invalidConstrainedUserData = {
+	id: "not-a-uuid",
+	age: 15,
+	email: "jane@example.com",
+};
+
+const mixedConstraintSchema: JSONSchema7 = {
+	type: "object",
+	properties: {
+		accountId: { type: "string", constraints: ["IsUuid"] },
+		owner: {
+			type: "object",
+			properties: {
+				email: { type: "string", constraints: ["IsCompanyEmail"] },
+				age: {
+					type: "number",
+					constraints: [{ name: "MinAge", params: { min: 21 } }],
+				},
+			},
+			required: ["email", "age"],
+		},
+	},
+	required: ["accountId", "owner"],
+};
+
+const validMixedConstraintData = {
+	accountId: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+	owner: {
+		email: "owner@acme.com",
+		age: 34,
+	},
+};
+
+const invalidMixedConstraintData = {
+	accountId: "bad-id",
+	owner: {
+		email: "owner@example.com",
+		age: 18,
+	},
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Benchmarks — End-to-End Real World Scenarios
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -455,6 +553,47 @@ summary(() => {
 			checker.check(personalOutput, conditionalFormSchema, {
 				data: { accountType: "personal" },
 			}),
+		);
+	});
+});
+
+summary(() => {
+	boxplot(() => {
+		bench("constraints: simple valid runtime check", () =>
+			checkerWithConstraints.check(
+				constrainedUserOutput,
+				unconstrainedUserInput,
+				{
+					data: validConstrainedUserData,
+				},
+			),
+		);
+		bench("constraints: simple invalid runtime check", () =>
+			checkerWithConstraints.check(
+				constrainedUserOutput,
+				unconstrainedUserInput,
+				{
+					data: invalidConstrainedUserData,
+				},
+			),
+		);
+		bench("constraints: nested valid runtime check", () =>
+			checkerWithConstraints.check(
+				mixedConstraintSchema,
+				mixedConstraintSchema,
+				{
+					data: validMixedConstraintData,
+				},
+			),
+		);
+		bench("constraints: nested invalid runtime check", () =>
+			checkerWithConstraints.check(
+				mixedConstraintSchema,
+				mixedConstraintSchema,
+				{
+					data: invalidMixedConstraintData,
+				},
+			),
 		);
 	});
 });
