@@ -444,12 +444,90 @@ function hasFormatConflict(
 // They are shared with `condition-resolver.ts`.
 
 /**
+ * Returns `true` if the schema (or any of its nested sub-schemas) contains
+ * the custom `constraints` keyword. Used as a cheap guard to skip the
+ * expensive `applyConstraintsMerge` post-processor when no constraints
+ * exist in either input — which is the overwhelmingly common case.
+ *
+ * Recurses into: `properties`, `patternProperties`, `items` (single or
+ * tuple), `additionalProperties`, `dependencies` (schema form).
+ */
+function hasConstraintsAnywhere(schema: JSONSchema7Definition): boolean {
+	if (typeof schema === "boolean") return false;
+
+	if (hasOwn(schema, "constraints") && schema.constraints !== undefined) {
+		return true;
+	}
+
+	if (isPlainObj(schema.properties)) {
+		const props = schema.properties as Record<string, JSONSchema7Definition>;
+		for (const key of Object.keys(props)) {
+			const prop = props[key];
+			if (prop !== undefined && hasConstraintsAnywhere(prop)) return true;
+		}
+	}
+
+	if (isPlainObj(schema.patternProperties)) {
+		const pp = schema.patternProperties as Record<
+			string,
+			JSONSchema7Definition
+		>;
+		for (const key of Object.keys(pp)) {
+			const val = pp[key];
+			if (val !== undefined && hasConstraintsAnywhere(val)) return true;
+		}
+	}
+
+	if (Array.isArray(schema.items)) {
+		for (const item of schema.items as JSONSchema7Definition[]) {
+			if (item !== undefined && hasConstraintsAnywhere(item)) return true;
+		}
+	} else if (isPlainObj(schema.items)) {
+		if (hasConstraintsAnywhere(schema.items as JSONSchema7Definition))
+			return true;
+	}
+
+	if (isPlainObj(schema.additionalProperties)) {
+		if (
+			hasConstraintsAnywhere(
+				schema.additionalProperties as JSONSchema7Definition,
+			)
+		)
+			return true;
+	}
+
+	if (isPlainObj(schema.dependencies)) {
+		const deps = schema.dependencies as Record<
+			string,
+			JSONSchema7Definition | string[]
+		>;
+		for (const key of Object.keys(deps)) {
+			const val = deps[key];
+			if (
+				val !== undefined &&
+				!Array.isArray(val) &&
+				hasConstraintsAnywhere(val as JSONSchema7Definition)
+			)
+				return true;
+		}
+	}
+
+	return false;
+}
+
+/**
  * Recursively applies constraint merging to a schema that was produced
  * by the `shallowAllOfMerge` engine. The external library does not know
  * about our custom `constraints` keyword, so it applies an arbitrary
  * default (identity / last-wins). This post-processor walks the merged
  * result and replaces `constraints` with the proper union from both
  * original input schemas.
+ *
+ * **Performance guard:** If neither `a` nor `b` contains `constraints`
+ * anywhere in their schema tree, returns `merged` immediately with zero
+ * allocation. This is the overwhelmingly common case (schemas without
+ * custom constraints), so the guard eliminates the shallow copy + recursion
+ * overhead that was causing a ~10-25% regression on every merge call.
  *
  * Recurses into: `properties`, `patternProperties`, `items` (single or
  * tuple), `additionalProperties`, `dependencies` (schema form).
@@ -461,6 +539,14 @@ function applyConstraintsMerge(
 ): JSONSchema7Definition {
 	if (typeof merged === "boolean") return merged;
 	if (typeof a === "boolean" || typeof b === "boolean") return merged;
+
+	// ── Fast path: no constraints anywhere → return merged as-is ──
+	// The guard checks only the original inputs (a, b). If neither has
+	// constraints, the merged result cannot have meaningful constraints
+	// either — skip the shallow copy and recursive traversal entirely.
+	if (!hasConstraintsAnywhere(a) && !hasConstraintsAnywhere(b)) {
+		return merged;
+	}
 
 	let changed = false;
 	const result = { ...merged };
@@ -760,6 +846,14 @@ export class MergeEngine {
 		a: JSONSchema7Definition,
 		b: JSONSchema7Definition,
 	): JSONSchema7Definition | null {
+		// ── Trivial fast paths ──
+		// Avoid expensive recursive conflict checks and external merge calls
+		// for the most common identity/boolean intersection cases.
+		if (a === b) return a;
+		if (a === false || b === false) return false;
+		if (a === true) return b;
+		if (b === true) return a;
+
 		// Pre-check: const conflict detectable before the merge
 		if (hasDeepConstConflict(a, b)) {
 			return null;
@@ -799,6 +893,14 @@ export class MergeEngine {
 		a: JSONSchema7Definition,
 		b: JSONSchema7Definition,
 	): JSONSchema7Definition {
+		// ── Trivial fast paths ──
+		// Keep mergeOrThrow aligned with merge() for the common boolean/identity
+		// intersections that can be resolved without touching the merge library.
+		if (a === b) return a;
+		if (a === false || b === false) return false;
+		if (a === true) return b;
+		if (b === true) return a;
+
 		// Pre-check: const conflict
 		if (hasDeepConstConflict(a, b)) {
 			throw new Error(
