@@ -11,9 +11,9 @@ beforeAll(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 //  check with conditions — combining resolution + subset check
 //
-//  With the `{ data }` API, `data` is a concrete runtime instance.
-//  It must validate against both resolved sub and resolved sup schemas.
-//  If data is incomplete or invalid, runtime validation fails → isSubset: false.
+//  With the `{ data }` API, `data` is used for condition resolution and
+//  narrowing. Runtime validation (AJV + constraints) only runs when
+//  `validate: true` is explicitly set.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("check with conditions", () => {
@@ -86,7 +86,7 @@ describe("check with conditions", () => {
 
 		// data matches the then-branch resolution, but sub declares value: number
 		// which conflicts with the resolved sup's value: string.
-		// Runtime validation of data against sub fails (value is string but sub says number).
+		// The static check detects the type mismatch after condition resolution.
 		const result = checker.check(sub, conditionalSup, {
 			data: { kind: "text", value: "hello" },
 		});
@@ -350,9 +350,30 @@ describe("check with conditions", () => {
 		expect(result.isSubset).toBe(true);
 	});
 
-	// ── Partial data triggers runtime validation failure ────────────────────
+	// ── Partial data without validate — no runtime validation ───────────────
 
-	test("partial data (missing required field) → runtime validation fails", () => {
+	test("partial data (missing required field) without validate → still passes static check", () => {
+		const sub: JSONSchema7 = {
+			type: "object",
+			properties: {
+				kind: { const: "text" },
+				value: { type: "string", minLength: 1 },
+			},
+			required: ["kind", "value"],
+		};
+
+		// Data is missing `value`, but without `validate: true` only condition
+		// resolution + narrowing + static check are performed.
+		// The schemas are structurally compatible → isSubset: true.
+		const result = checker.check(sub, conditionalSup, {
+			data: { kind: "text" },
+		});
+		expect(result.isSubset).toBe(true);
+	});
+
+	// ── Partial data with validate: true triggers runtime validation failure ──
+
+	test("partial data (missing required field) with validate: true → runtime validation fails", () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -363,9 +384,10 @@ describe("check with conditions", () => {
 		};
 
 		// Data is missing `value` — both sub and conditionalSup require it.
-		// Runtime validation catches this → isSubset: false with errors.
+		// With `validate: true`, AJV catches this → isSubset: false with errors.
 		const result = checker.check(sub, conditionalSup, {
 			data: { kind: "text" },
+			validate: true,
 		});
 		expect(result.isSubset).toBe(false);
 		expect(result.errors.length).toBeGreaterThan(0);

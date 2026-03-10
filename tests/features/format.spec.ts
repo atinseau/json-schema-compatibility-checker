@@ -29,6 +29,7 @@ function expectRuntimeFormatResult(
 	const schema: JSONSchema7 = { type: "string", format };
 	const result = checker.check(schema, schema, {
 		data: value,
+		validate: true,
 	});
 
 	expect(result.isSubset).toBe(expected);

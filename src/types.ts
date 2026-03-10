@@ -25,17 +25,35 @@ export interface SubsetResult {
  *
  * When `data` is provided, the checker:
  *   1. Resolves `if/then/else` conditions in both `sub` and `sup` using `data`
- *   2. Validates `data` against both resolved schemas via AJV
- *   3. Narrows schemas using runtime values (e.g. enum materialization)
- *   4. Performs the static subset check on the resolved/narrowed schemas
+ *      (if `data` is `undefined`, conditions are resolved with `{}`)
+ *   2. Narrows schemas using runtime values (e.g. enum materialization)
+ *   3. Performs the static subset check on the resolved/narrowed schemas
  *
- * `data` is a concrete runtime instance value — not just a partial discriminant.
- * If `data` does not validate against `resolvedSub` or `resolvedSup`,
- * the result will be `isSubset: false` with runtime validation errors.
+ * When `validate` is `true`, two additional runtime steps run **after** the
+ * static check passes:
+ *   4. `data` is validated against both resolved schemas via AJV
+ *   5. Custom constraints are validated against `data`
+ *
+ * `data` can be a partial discriminant (e.g. `{ kind: "text" }`) used solely
+ * for condition resolution and narrowing. It does **not** need to be a complete
+ * instance of the schemas unless `validate: true` is set.
  */
 export interface CheckRuntimeOptions {
-	/** Runtime data used for condition resolution, runtime validation, and narrowing */
+	/** Runtime data used for condition resolution, narrowing, and optionally runtime validation */
 	data: unknown;
+
+	/**
+	 * When `true`, enables runtime validation of `data` against both resolved
+	 * schemas via AJV, and custom constraint validation if a registry was
+	 * provided at construction time.
+	 *
+	 * When `false` or omitted (default), `data` is used only for condition
+	 * resolution (`if/then/else`) and schema narrowing — no AJV validation
+	 * or constraint validation is performed.
+	 *
+	 * @default false
+	 */
+	validate?: boolean;
 }
 
 /**
