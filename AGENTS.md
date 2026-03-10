@@ -9,7 +9,7 @@
 - **Linter/Formatter**: Biome (tabs, double quotes, recommended rules)
 - **Build**: SWC (ESM + CJS dual output) + tsc (declaration files only)
 - **Tests**: Bun's built-in test runner (`bun:test`)
-- **Dependencies**: `@x0k/json-schema-merge` (merge engine), `class-validator` (format validation), `randexp` (pattern sampling)
+- **Dependencies**: `@x0k/json-schema-merge` (merge engine), `ajv` + `ajv-formats` (runtime JSON Schema validation — condition evaluation, data validation), `class-validator` (format validation), `randexp` (pattern sampling)
 
 ## Commands — Always Validate Your Changes
 
@@ -58,23 +58,27 @@ The CI pipeline (`.github/workflows/ci.yml`) runs: check-types → biome check �
 src/
 ├── index.ts                          # Public re-exports (entry point)
 ├── json-schema-compatibility-checker.ts  # Main facade class (JsonSchemaCompatibilityChecker)
-├── types.ts                          # Public interfaces: SubsetResult, SchemaError, ResolvedConditionResult
+├── types.ts                          # Public interfaces: SubsetResult, SchemaError, ResolvedConditionResult, ConstraintValidator, CheckerOptions
 ├── merge-engine.ts                   # MergeEngine: allOf merge (intersection) + overlay (deep spread) + conflict detection (wraps @x0k/json-schema-merge)
 ├── subset-checker.ts                 # Core subset logic: isAtomicSubsetOf, evaluateNot, getBranchesTyped, checkAtomic/Branched, nested branching fallback (hasNestedBranching, isPropertySubsetOf, isObjectSubsetByProperties, tryNestedBranchingFallback)
-├── normalizer.ts                     # Schema normalizer: infer type from const/enum, double-negation resolution, recursive normalization
-├── condition-resolver.ts             # if/then/else resolution with discriminant data, allOf condition handling
+├── normalizer.ts                     # Schema normalizer: infer type from const/enum, double-negation resolution, constraints canonicalization, recursive normalization
+├── condition-resolver.ts             # if/then/else resolution with discriminant data, allOf condition handling, delegates evaluation to runtime-validator
+├── runtime-validator.ts              # AJV-based runtime validation: isDataValidForSchema, getRuntimeValidationErrors (singleton AJV instance with LRU + WeakMap caching)
+├── constraint-validator.ts           # Custom constraint validation: validateSchemaConstraints (recurses into properties, items, patternProperties, additionalProperties, dependencies)
 ├── data-narrowing.ts                 # Narrows a schema using runtime data when the target has enum/const constraints
-├── semantic-errors.ts                # Human-readable error generation: computeSemanticErrors, comparePropertySchemas
+├── semantic-errors.ts                # Human-readable error generation: computeSemanticErrors, comparePropertySchemas, checkCustomConstraints, formatSchemaType (with constraints suffix)
 ├── format-validator.ts               # Format validation (email, uri, date-time...) + format hierarchy (FORMAT_SUPERSETS)
 ├── pattern-subset.ts                 # Regex pattern subset via sampling (isPatternSubset, arePatternsEquivalent)
 ├── formatter.ts                      # formatResult() for debug output
-└── utils.ts                          # Shared utilities: deepEqual, isPlainObj, hasOwn, omitKeys, unionStrings, schemaDeepEqual
+└── utils.ts                          # Shared utilities: deepEqual, isPlainObj, hasOwn, omitKeys, unionStrings, mergeConstraints, toConstraintArray
+
+global.d.ts                           # Module augmentation: extends JSONSchema7 with `constraints?: Constraints`
 
 tests/
-├── core/           # Tests for main API methods: isSubset, check, check-connection, intersect, isEqual, normalize, semantic-errors, edge-cases
+├── core/           # Tests for main API methods: isSubset, check, check-connection, intersect, isEqual, normalize, semantic-errors, edge-cases, constraint-validators, runtime-validator-cache
 ├── features/       # Tests per JSON Schema feature: type-system, const-enum, not, pattern, format, anyOf/oneOf, object-properties, data-narrowing, contains-items, dependencies, property-names
 ├── conditions/     # Tests for if/then/else resolution, evaluateCondition, resolve-conditions
-├── merge-engine/   # Tests for the merge engine: types, keywords, enum-const, advanced merges, overlay (deep spread)
+├── merge-engine/   # Tests for the merge engine: types, keywords, enum-const, advanced merges, overlay (deep spread), merge-constraints
 ├── bugs/           # Regression tests for specific bug fixes
 ├── integration/    # Import tests (ESM + CJS) and end-to-end integration
 └── audit/          # Tests for unsupported features ($ref) and edge detection
@@ -100,12 +104,37 @@ sub, sup → normalize() → getBranchesTyped() → [if branched] per-branch che
                                                                    → per-property isPropertySubsetOf()
                                                                       → getBranchesTyped() + isAtomicSubsetOf()
 
-With options (condition resolution):
-sub, sup, options → resolveConditions(sub, subData)
-                  → resolveConditions(sup, supData)
-                  → narrowSchemaWithData(resolvedSub, subData, resolvedSup)
-                  → checkInternal(narrowedSub, resolvedSup)
+With options (runtime mode):
+sub, sup, { data } → resolveConditions(sub, data)          ← uses isDataValidForSchema (AJV)
+                    → resolveConditions(sup, data)          ← uses isDataValidForSchema (AJV)
+                    → narrowSchemaWithData(resolvedSub, data, resolvedSup)
+                    → narrowSchemaWithData(resolvedSup, data, resolvedSub)
+                    → checkInternal(narrowedSub, narrowedSup)     ← structural subset check
+                    → [if static check fails] return { isSubset: false, errors }
+                    → getRuntimeValidationErrors(narrowedSub, data)  ← AJV validation
+                    → getRuntimeValidationErrors(narrowedSup, data)  ← AJV validation
+                    → validateSchemaConstraints(narrowedSub, data, registry)  ← custom constraints
+                    → validateSchemaConstraints(narrowedSup, data, registry)  ← custom constraints
+                    → [if runtime errors] return { isSubset: false, errors }
+                    → [if all pass] return { isSubset: true, ... }
 ```
+
+### Runtime Validator (`runtime-validator.ts`)
+
+Centralizes all AJV-based runtime validation behind a singleton AJV instance (module-level, shared across all checker instances). Two main exports:
+
+| Function | Purpose |
+|---|---|
+| `isDataValidForSchema(schema, data)` | Boolean validation — used by `condition-resolver.ts` for `if/then/else` evaluation (replaces the former hand-rolled `evaluateCondition` logic) |
+| `getRuntimeValidationErrors(schema, data)` | Returns `SchemaError[]` — used by the facade's `check()` runtime path for data-level validation |
+
+Caching strategy: **WeakMap** by schema object reference (primary, zero-cost for repeated calls with same schema instance) + **LRU Map** (bounded to 500 entries) keyed by deterministic `stableStringify` (fallback for structurally identical schemas with different references).
+
+### Constraint Validator (`constraint-validator.ts`)
+
+Validates runtime data against the custom `constraints` keyword using a user-provided `ConstraintValidatorRegistry`. Separate from the AJV-based runtime validator (which handles standard JSON Schema keywords) and from `format-validator.ts` (which handles the `format` keyword for static subset checking).
+
+`validateSchemaConstraints(schema, data, registry)` recursively walks into: root-level constraints, `properties`, `patternProperties`, `items` (single + tuple), `additionalProperties` (schema form), `dependencies` (schema form).
 
 ### Nested Branching Fallback
 
@@ -148,13 +177,15 @@ const converged = engine.merge(pathAContext, pathBContext);
 ### Key Design Decisions — Follow These
 
 1. **Immutability via copy-on-write.** The normalizer uses `ensureCopy()` — never mutate input schemas directly. All functions should treat schemas as immutable. `overlay` returns new objects and never mutates its inputs.
-2. **WeakMap caching.** `normalizeCache` in `normalizer.ts` caches results per object reference. Do NOT break this by creating unnecessary copies of schemas before normalizing.
+2. **WeakMap caching.** `normalizeCache` in `normalizer.ts` caches results per object reference. Do NOT break this by creating unnecessary copies of schemas before normalizing. The runtime validator uses both a `WeakMap` (primary) and a bounded `LRU Map` (fallback) for compiled AJV validators.
 3. **Lazy early-exit patterns.** Every function uses short-circuit returns (identity checks, `deepEqual` before expensive operations). Preserve this pattern.
 4. **Ternary results for uncertain operations.** `isPatternSubset()` and `isFormatSubset()` return `true | false | null`. `null` means "cannot determine" — never treat it as `false`.
 5. **No `$ref` support.** The library does NOT resolve `$ref`. Do not attempt to add `$ref` resolution without explicit instruction.
 6. **Facade pattern.** `JsonSchemaCompatibilityChecker` is a thin orchestrator. Core logic lives in the sub-modules. Add new logic to the appropriate sub-module, not to the facade.
 7. **Intersection ≠ Overlay.** Do NOT use `merge`/`mergeOrThrow` for sequential context accumulation — it silently swallows widening overrides (intersection keeps the narrowest). Use `overlay` instead. Do NOT use `overlay` for subset checking — it has no set-theoretic meaning.
 8. **Nested branching fallback.** When the merge-based check fails and either schema has `oneOf`/`anyOf` inside `properties` or `items`, the subset checker falls back to property-by-property comparison. This is triggered automatically — no caller intervention needed. The fallback is guarded by `hasNestedBranching()` to avoid overhead on normal schemas.
+9. **Singleton AJV instance.** `runtime-validator.ts` uses a module-level AJV singleton shared across all `JsonSchemaCompatibilityChecker` instances. This is intentional for performance (compiled validators are reused). AJV is configured with `strict: false` to tolerate unknown keywords like `constraints`. Do NOT create per-instance AJV — it would break the caching strategy.
+10. **Custom constraints are structural + runtime.** The `constraints` keyword is handled at three levels: structurally by the merge engine (union + dedup via `applyConstraintsMerge`), statically by the subset checker (`deepEqual` after merge), and at runtime by the constraint validator (`validateSchemaConstraints`). The merge engine and condition resolver share `mergeConstraints` / `toConstraintArray` from `utils.ts`.
 
 ## Code Conventions
 
@@ -215,7 +246,7 @@ describe("featureName", () => {
 
 ## Anti-Patterns to Avoid
 
-1. **Do NOT add runtime dependencies** without explicit approval. The library is intentionally lightweight.
+1. **Do NOT add runtime dependencies** without explicit approval. Current runtime deps: `@x0k/json-schema-merge`, `ajv`, `ajv-formats`, `class-validator`, `randexp`.
 2. **Do NOT use `any` type.** Use `unknown` and narrow with type guards.
 3. **Do NOT mutate input parameters.** Always use copy-on-write or return new objects.
 4. **Do NOT add `console.log` in library code.** Use `formatResult()` for debug output in tests.
@@ -223,7 +254,7 @@ describe("featureName", () => {
 6. **Do NOT use `JSON.stringify` for schema comparison.** Use `deepEqual()` from `utils.ts`.
 7. **Do NOT ignore `null` returns** from `isPatternSubset()` or `isFormatSubset()`. They indicate uncertainty, not failure.
 8. **Do NOT nest ternaries.** Use early returns or if/else chains for readability.
-9. **Do NOT create circular dependencies** between `src/` modules. The dependency graph flows: `index → facade → subset-checker/condition-resolver/data-narrowing → merge-engine/normalizer/semantic-errors → utils`.
+9. **Do NOT create circular dependencies** between `src/` modules. The dependency graph flows: `index → facade → subset-checker/condition-resolver/data-narrowing/constraint-validator → merge-engine/normalizer/semantic-errors/runtime-validator → utils`.
 
 ## Adding New Features Checklist
 

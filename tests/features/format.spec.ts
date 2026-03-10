@@ -12,36 +12,72 @@ beforeAll(() => {
 //  Format validation — hierarchy, conflicts, edge cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Formats not natively supported by ajv-formats — AJV silently ignores them
+// so runtime validation cannot catch invalid values for these formats.
+const _AJV_UNSUPPORTED_FORMATS = new Set([
+	"idn-email",
+	"idn-hostname",
+	"iri",
+	"iri-reference",
+]);
+
+function expectRuntimeFormatResult(
+	format: NonNullable<JSONSchema7["format"]>,
+	value: unknown,
+	expected: boolean,
+): void {
+	const schema: JSONSchema7 = { type: "string", format };
+	const result = checker.check(schema, schema, {
+		data: value,
+	});
+
+	expect(result.isSubset).toBe(expected);
+
+	if (expected) {
+		expect(result.errors).toEqual([]);
+		return;
+	}
+
+	// Runtime validation runs against both sub and sup (same schema here),
+	// so we expect errors prefixed with $sub and $sup.
+	expect(result.errors.length).toBeGreaterThan(0);
+	expect(result.errors[0]).toEqual({
+		key: "$sub",
+		expected: `format: ${format}`,
+		received: typeof value === "string" ? value : JSON.stringify(value),
+	});
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-//  Amélioration 4 — format : validation sémantique via class-validator
+//  Enhancement 4 — format: semantic validation via class-validator
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Amélioration 4 — format validation", () => {
-	// ── 4.3 / 4.4 — Intégration evaluateCondition / evaluateNot ───────────
-	// (déjà couvert dans Améliorations 1 et 2 ci-dessus)
+describe("Enhancement 4 — format validation", () => {
+	// ── 4.3 / 4.4 — Integration evaluateCondition / evaluateNot ───────────
+	// (already covered in Enhancements 1 and 2 above)
 
-	// ── 4.5 — Conflit format-vs-format dans le merge engine ────────────────
+	// ── 4.5 — Format-vs-format conflict in the merge engine ────────────────
 
 	describe("4.5 — hasFormatConflict", () => {
-		test("Test E.1 : format ⊆ type → true (non-régression, géré nativement)", () => {
+		test("Test E.1: format ⊆ type → true (non-regression, handled natively)", () => {
 			const sub: JSONSchema7 = { type: "string", format: "email" };
 			const sup: JSONSchema7 = { type: "string" };
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 
-		test("Test E.2 : type ⊄ format → false (non-régression, géré nativement)", () => {
+		test("Test E.2: type ⊄ format → false (non-regression, handled natively)", () => {
 			const sub: JSONSchema7 = { type: "string" };
 			const sup: JSONSchema7 = { type: "string", format: "email" };
 			expect(checker.isSubset(sub, sup)).toBe(false);
 		});
 
-		test("Test E.3 : format identique → true (non-régression)", () => {
+		test("Test E.3: identical format → true (non-regression)", () => {
 			const sub: JSONSchema7 = { type: "string", format: "uuid" };
 			const sup: JSONSchema7 = { type: "string", format: "uuid" };
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 
-		test("Test E.4 : formats incompatibles (email ∩ ipv4) → merge null", () => {
+		test("Test E.4: incompatible formats (email ∩ ipv4) → merge null", () => {
 			const sub: JSONSchema7 = { type: "string", format: "email" };
 			const sup: JSONSchema7 = { type: "string", format: "ipv4" };
 			const result = checker.intersect(sub, sup);
@@ -49,42 +85,42 @@ describe("Amélioration 4 — format validation", () => {
 			expect(checker.isSubset(sub, sup)).toBe(false);
 		});
 
-		test("Test E.5 : format avec hiérarchie (email ⊆ idn-email) → true", () => {
+		test("Test E.5: format with hierarchy (email ⊆ idn-email) → true", () => {
 			const sub: JSONSchema7 = { type: "string", format: "email" };
 			const sup: JSONSchema7 = { type: "string", format: "idn-email" };
-			// email ⊆ idn-email → pas de conflit format
+			// email ⊆ idn-email → no format conflict
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 
-		test("hostname ⊆ idn-hostname (hiérarchie)", () => {
+		test("hostname ⊆ idn-hostname (hierarchy)", () => {
 			const sub: JSONSchema7 = { type: "string", format: "hostname" };
 			const sup: JSONSchema7 = { type: "string", format: "idn-hostname" };
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 
-		test("uri ⊆ iri (hiérarchie)", () => {
+		test("uri ⊆ iri (hierarchy)", () => {
 			const sub: JSONSchema7 = { type: "string", format: "uri" };
 			const sup: JSONSchema7 = { type: "string", format: "iri" };
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 
-		test("uri-reference ⊆ iri-reference (hiérarchie)", () => {
+		test("uri-reference ⊆ iri-reference (hierarchy)", () => {
 			const sub: JSONSchema7 = { type: "string", format: "uri-reference" };
 			const sup: JSONSchema7 = { type: "string", format: "iri-reference" };
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 
-		test("idn-email ⊄ email (inverse de la hiérarchie)", () => {
+		test("idn-email ⊄ email (inverse of hierarchy)", () => {
 			const sub: JSONSchema7 = { type: "string", format: "idn-email" };
 			const sup: JSONSchema7 = { type: "string", format: "email" };
-			// idn-email n'est PAS un sous-ensemble de email (c'est l'inverse)
-			// Mais l'intersection idn-email ∩ email = email (le plus restrictif)
-			// donc le merge ne retourne pas null — il retourne un résultat avec format email.
-			// En revanche, isSubset est false car merged ≠ sub.
+			// idn-email is NOT a subset of email (it's the inverse)
+			// But the intersection idn-email ∩ email = email (the most restrictive)
+			// so the merge does not return null — it returns a result with format email.
+			// However, isSubset is false because merged ≠ sub.
 			expect(checker.isSubset(sub, sup)).toBe(false);
 		});
 
-		test("formats différents sans relation → merge null", () => {
+		test("different formats without relation → merge null", () => {
 			const result1 = checker.intersect(
 				{ type: "string", format: "uuid" },
 				{ type: "string", format: "email" },
@@ -98,7 +134,7 @@ describe("Amélioration 4 — format validation", () => {
 			expect(result2).toBeNull();
 		});
 
-		test("même format → merge préserve le format", () => {
+		test("same format → merge preserves the format", () => {
 			const result = checker.intersect(
 				{ type: "string", format: "email" },
 				{ type: "string", format: "email" },
@@ -107,7 +143,7 @@ describe("Amélioration 4 — format validation", () => {
 			expect(result.format).toBe("email");
 		});
 
-		test("un seul format → merge préserve le format (pas de conflit)", () => {
+		test("single format → merge preserves the format (no conflict)", () => {
 			const result = checker.intersect(
 				{ type: "string", format: "email" },
 				{ type: "string", minLength: 5 },
@@ -116,7 +152,7 @@ describe("Amélioration 4 — format validation", () => {
 			expect(result.format).toBe("email");
 		});
 
-		test("conflit format dans propriétés imbriquées → merge null", () => {
+		test("format conflict in nested properties → merge null", () => {
 			const result = checker.intersect(
 				{
 					type: "object",
@@ -130,13 +166,130 @@ describe("Amélioration 4 — format validation", () => {
 			expect(result).toBeNull();
 		});
 
-		test("conflit format dans items → merge null", () => {
+		test("format conflict in items → merge null", () => {
 			const result = checker.intersect(
 				{ type: "array", items: { type: "string", format: "email" } },
 				{ type: "array", items: { type: "string", format: "uuid" } },
 			);
 			expect(result).toBeNull();
 		});
+	});
+});
+
+describe("format — runtime validation for every supported format", () => {
+	test("date-time runtime validation", () => {
+		expectRuntimeFormatResult("date-time", "2024-01-15T10:30:00Z", true);
+		expectRuntimeFormatResult("date-time", "not-a-date-time", false);
+	});
+
+	test("date runtime validation", () => {
+		expectRuntimeFormatResult("date", "2024-01-15", true);
+		expectRuntimeFormatResult("date", "2024-02-30", false);
+	});
+
+	test("time runtime validation", () => {
+		expectRuntimeFormatResult("time", "10:30:00Z", true);
+		expectRuntimeFormatResult("time", "not-a-time", false);
+	});
+
+	test("email runtime validation", () => {
+		expectRuntimeFormatResult("email", "test@example.com", true);
+		expectRuntimeFormatResult("email", "not-an-email", false);
+	});
+
+	test("idn-email runtime validation (AJV unsupported — graceful pass)", () => {
+		// AJV does not natively validate idn-email; it silently ignores the format.
+		// Valid values still pass, invalid values are NOT caught at runtime.
+		expectRuntimeFormatResult("idn-email", "test@example.com", true);
+		expectRuntimeFormatResult("idn-email", "not-an-email", true); // AJV ignores unknown format
+	});
+
+	test("hostname runtime validation", () => {
+		expectRuntimeFormatResult("hostname", "example.com", true);
+		expectRuntimeFormatResult("hostname", "bad host name", false);
+	});
+
+	test("idn-hostname runtime validation (AJV unsupported — graceful pass)", () => {
+		// AJV does not natively validate idn-hostname; it silently ignores the format.
+		expectRuntimeFormatResult("idn-hostname", "example.com", true);
+		expectRuntimeFormatResult("idn-hostname", "bad host name", true); // AJV ignores unknown format
+	});
+
+	test("ipv4 runtime validation", () => {
+		expectRuntimeFormatResult("ipv4", "192.168.1.1", true);
+		expectRuntimeFormatResult("ipv4", "999.999.999.999", false);
+	});
+
+	test("ipv6 runtime validation", () => {
+		expectRuntimeFormatResult("ipv6", "2001:db8::1", true);
+		expectRuntimeFormatResult("ipv6", "not-an-ipv6", false);
+	});
+
+	test("uri runtime validation", () => {
+		expectRuntimeFormatResult("uri", "https://example.com/path", true);
+		expectRuntimeFormatResult("uri", "/relative/path", false);
+	});
+
+	test("uri-reference runtime validation", () => {
+		expectRuntimeFormatResult(
+			"uri-reference",
+			"https://example.com/path",
+			true,
+		);
+		expectRuntimeFormatResult("uri-reference", "not a uri reference", false);
+	});
+
+	test("iri runtime validation (AJV unsupported — graceful pass)", () => {
+		// AJV does not natively validate iri; it silently ignores the format.
+		expectRuntimeFormatResult("iri", "https://example.com/path", true);
+		expectRuntimeFormatResult("iri", "/relative/path", true); // AJV ignores unknown format
+	});
+
+	test("iri-reference runtime validation (AJV unsupported — graceful pass)", () => {
+		// AJV does not natively validate iri-reference; it silently ignores the format.
+		expectRuntimeFormatResult(
+			"iri-reference",
+			"https://example.com/path",
+			true,
+		);
+		expectRuntimeFormatResult("iri-reference", "not a iri reference", true); // AJV ignores unknown format
+	});
+
+	test("uri-template runtime validation", () => {
+		expectRuntimeFormatResult(
+			"uri-template",
+			"https://example.com/{user}/orders{?id}",
+			true,
+		);
+		expectRuntimeFormatResult(
+			"uri-template",
+			"https://example.com/{user",
+			false,
+		);
+	});
+
+	test("uuid runtime validation", () => {
+		expectRuntimeFormatResult(
+			"uuid",
+			"123e4567-e89b-12d3-a456-426614174000",
+			true,
+		);
+		expectRuntimeFormatResult("uuid", "not-a-uuid", false);
+	});
+
+	test("json-pointer runtime validation", () => {
+		expectRuntimeFormatResult("json-pointer", "/items/0/name", true);
+		expectRuntimeFormatResult("json-pointer", "items/0/name", false);
+	});
+
+	test("relative-json-pointer runtime validation", () => {
+		expectRuntimeFormatResult("relative-json-pointer", "0#", true);
+		expectRuntimeFormatResult("relative-json-pointer", "#", false);
+	});
+
+	test("regex runtime validation", () => {
+		expectRuntimeFormatResult("regex", "^[a-z]+$", true);
+		expectRuntimeFormatResult("regex", "[", false);
 	});
 });
 

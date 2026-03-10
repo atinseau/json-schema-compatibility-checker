@@ -1,33 +1,33 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import { deepEqual, hasOwn, isPlainObj } from "./utils";
+import { deepEqual, hasOwn, isPlainObj } from "./utils.ts";
 
 // ─── Schema Normalizer ───────────────────────────────────────────────────────
 //
-// Fonctions pures pour normaliser un JSON Schema :
-//   - Inférer `type` depuis `const` ou `enum`
-//   - Récurser dans toutes les sous-structures (properties, items, anyOf, etc.)
-//   - Résoudre la double négation `not.not` → aplatir en contenu direct
-//   - Récurser dans `patternProperties` (Point 2)
-//   - Récurser dans `dependencies` forme schema (Point 3)
+// Pure functions to normalize a JSON Schema:
+//   - Infer `type` from `const` or `enum`
+//   - Recurse into all sub-structures (properties, items, anyOf, etc.)
+//   - Resolve double negation `not.not` → flatten to direct content
+//   - Recurse into `patternProperties` (Point 2)
+//   - Recurse into `dependencies` schema form (Point 3)
 //
-// Optimisations :
-//   - WeakMap cache pour éviter de re-normaliser le même objet
-//   - Lazy copy-on-write : ne crée une copie que si des mutations sont nécessaires
-//   - Retourne l'original si rien n'a changé (évite les allocations)
+// Optimizations:
+//   - WeakMap cache to avoid re-normalizing the same object
+//   - Lazy copy-on-write: only creates a copy when mutations are needed
+//   - Returns the original if nothing changed (avoids allocations)
 
 // ─── Normalization Cache ─────────────────────────────────────────────────────
 
 /**
- * Cache WeakMap pour les résultats de normalisation.
- * Évite de re-normaliser le même objet schema plusieurs fois.
- * WeakMap permet au GC de collecter les schemas qui ne sont plus référencés.
+ * WeakMap cache for normalization results.
+ * Avoids re-normalizing the same schema object multiple times.
+ * WeakMap allows the GC to collect schemas that are no longer referenced.
  */
 const normalizeCache = new WeakMap<object, JSONSchema7Definition>();
 
 // ─── Type inference ──────────────────────────────────────────────────────────
 
 /**
- * Infère le type JSON Schema d'une valeur JavaScript.
+ * Infers the JSON Schema type from a JavaScript value.
  */
 export function inferType(value: unknown): string | undefined {
 	if (value === null) return "null";
@@ -47,7 +47,7 @@ export function inferType(value: unknown): string | undefined {
 
 // ─── Sub-schema keywords ─────────────────────────────────────────────────────
 
-/** Mots-clés contenant un unique sous-schema */
+/** Keywords containing a single sub-schema */
 const SINGLE_SCHEMA_KEYWORDS = [
 	"additionalProperties",
 	"additionalItems",
@@ -60,15 +60,15 @@ const SINGLE_SCHEMA_KEYWORDS = [
 ] as const;
 
 /**
- * Vérifie si un schema ne contient qu'un seul mot-clé `not` (et aucun
- * autre mot-clé significatif). Utilisé pour la résolution de double négation.
+ * Checks whether a schema contains only the `not` keyword (and no other
+ * significant keyword). Used for double negation resolution.
  *
- * Un schema « pur not » est de la forme `{ not: X }` sans aucune autre
- * contrainte. Dans ce cas, `{ not: { not: Y } }` ≡ `Y`.
+ * A "pure not" schema has the form `{ not: X }` without any other constraint.
+ * In that case, `{ not: { not: Y } }` ≡ `Y`.
  *
- * Les mots-clés de métadonnée (`$id`, `$schema`, `$comment`, `title`,
- * `description`, `default`, `examples`, `definitions`, `$defs`) ne sont
- * PAS considérés comme significatifs pour cette détection.
+ * Metadata keywords (`$id`, `$schema`, `$comment`, `title`, `description`,
+ * `default`, `examples`, `definitions`, `$defs`) are NOT considered
+ * significant for this detection.
  */
 const METADATA_KEYWORDS = new Set([
 	"$id",
@@ -83,29 +83,29 @@ const METADATA_KEYWORDS = new Set([
 ]);
 
 /**
- * Vérifie si un objet schema ne contient que le mot-clé `not`
- * (plus éventuellement des métadonnées non significatives).
+ * Checks whether a schema object contains only the `not` keyword
+ * (plus optionally non-significant metadata).
  */
 function isPureNotSchema(schema: JSONSchema7): boolean {
 	const schemaKeys = Object.keys(schema);
 	return schemaKeys.every((k) => k === "not" || METADATA_KEYWORDS.has(k));
 }
 
-/** Mots-clés contenant un tableau de sous-schemas */
+/** Keywords containing an array of sub-schemas */
 const ARRAY_SCHEMA_KEYWORDS = ["anyOf", "oneOf", "allOf"] as const;
 
 /**
- * Mots-clés contenant un Record<string, JSONSchema7Definition>
- * (chaque valeur est un sous-schema à normaliser récursivement).
+ * Keywords containing a Record<string, JSONSchema7Definition>
+ * (each value is a sub-schema to normalize recursively).
  */
 const PROPERTIES_LIKE_KEYWORDS = ["properties", "patternProperties"] as const;
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 /**
- * Normalise un `Record<string, JSONSchema7Definition>` en appliquant
- * `normalize` à chaque valeur.
- * Retourne l'objet original si rien n'a changé (évite les allocations).
+ * Normalizes a `Record<string, JSONSchema7Definition>` by applying
+ * `normalize` to each value.
+ * Returns the original object if nothing changed (avoids allocations).
  */
 function normalizePropertiesMap(
 	props: Record<string, JSONSchema7Definition>,
@@ -139,8 +139,8 @@ function normalizePropertiesMap(
 }
 
 /**
- * Infère le `type` depuis `const` si absent.
- * Retourne le type inféré ou undefined si non applicable.
+ * Infers `type` from `const` if absent.
+ * Returns the inferred type or undefined if not applicable.
  */
 function inferTypeFromConst(
 	schema: JSONSchema7,
@@ -151,8 +151,8 @@ function inferTypeFromConst(
 }
 
 /**
- * Infère le `type` depuis `enum` si absent.
- * Retourne le type inféré (single ou array) ou undefined si non applicable.
+ * Infers `type` from `enum` if absent.
+ * Returns the inferred type (single or array) or undefined if not applicable.
  */
 function inferTypeFromEnum(
 	schema: JSONSchema7,
@@ -177,22 +177,22 @@ function inferTypeFromEnum(
 // ─── Normalization ───────────────────────────────────────────────────────────
 
 /**
- * Normalise un schema : infère `type` depuis `const`/`enum`,
- * et normalise récursivement tous les sous-schemas.
+ * Normalizes a schema: infers `type` from `const`/`enum`,
+ * and recursively normalizes all sub-schemas.
  *
- * Récurse dans :
- *   - `properties` et `patternProperties` (Point 2)
- *   - `dependencies` forme schema (Point 3) — les valeurs tableau (forme 1)
- *     sont laissées intactes
- *   - `items` (single ou tuple)
- *   - Mots-clés single-schema (`additionalProperties`, `not`, `if`, etc.)
- *   - Mots-clés array-of-schema (`anyOf`, `oneOf`, `allOf`)
+ * Recurses into:
+ *   - `properties` and `patternProperties` (Point 2)
+ *   - `dependencies` schema form (Point 3) — array values (form 1)
+ *     are left unchanged
+ *   - `items` (single or tuple)
+ *   - Single-schema keywords (`additionalProperties`, `not`, `if`, etc.)
+ *   - Array-of-schema keywords (`anyOf`, `oneOf`, `allOf`)
  *
- * Optimisations :
- *   - WeakMap cache : retourne le résultat mis en cache en O(1)
- *   - Lazy copy-on-write : ne crée une copie shallow que quand la première
- *     mutation est nécessaire, via `ensureCopy()`
- *   - Les sous-structures ne sont remplacées que si effectivement changées
+ * Optimizations:
+ *   - WeakMap cache: returns the cached result in O(1)
+ *   - Lazy copy-on-write: only creates a shallow copy when the first
+ *     mutation is needed, via `ensureCopy()`
+ *   - Sub-structures are only replaced if actually changed
  */
 export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 	if (typeof def === "boolean") return def;
@@ -216,23 +216,23 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		return schema;
 	}
 
-	// ── Inférer type depuis const ──
+	// ── Infer type from const ──
 	const typeFromConst = inferTypeFromConst(schema);
 	if (typeFromConst) {
 		ensureCopy().type = typeFromConst;
 	}
 
-	// ── Inférer type depuis enum ──
+	// ── Infer type from enum ──
 	const typeFromEnum = inferTypeFromEnum(schema);
 	if (typeFromEnum) {
 		ensureCopy().type = typeFromEnum;
 	}
 
-	// ── Convertir enum à un seul élément en const ──
-	// Sémantiquement, { enum: [X] } ≡ { const: X }.
-	// Cette normalisation garantit que la comparaison structurelle
-	// (isEqual) ne produit pas de faux négatifs quand un schema utilise
-	// enum et l'autre utilise const pour la même valeur.
+	// ── Convert single-element enum to const ──
+	// Semantically, { enum: [X] } ≡ { const: X }.
+	// This normalization ensures that structural comparison (isEqual) does not
+	// produce false negatives when one schema uses enum and the other uses
+	// const for the same value.
 	if (
 		Array.isArray(schema.enum) &&
 		schema.enum.length === 1 &&
@@ -244,16 +244,28 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 	}
 
 	// ── Strip redundant enum when const is present ──
-	// Si `const: X` et `enum: [... X ...]` coexistent, `const` est plus
-	// restrictif → `enum` est redondant. Le merge engine peut produire
-	// cette combinaison lors de l'intersection const ∩ enum.
+	// If `const: X` and `enum: [... X ...]` coexist, `const` is more
+	// restrictive → `enum` is redundant. The merge engine can produce
+	// this combination during the const ∩ enum intersection.
 	if (hasOwn(schema, "const") && Array.isArray(schema.enum)) {
 		if (schema.enum.some((v) => deepEqual(v, schema.const))) {
 			delete ensureCopy().enum;
 		}
 	}
 
-	// ── Récurser dans properties & patternProperties (Point 2) ──
+	// ── Normalize constraints to array form ──
+	// The `constraints` custom keyword accepts `Constraint | Constraint[]`.
+	// Canonicalize to always be an array so that deepEqual comparisons
+	// in the subset checker work correctly.
+	if (
+		hasOwn(schema, "constraints") &&
+		schema.constraints !== undefined &&
+		!Array.isArray(schema.constraints)
+	) {
+		ensureCopy().constraints = [schema.constraints];
+	}
+
+	// ── Recurse into properties & patternProperties (Point 2) ──
 	for (const keyword of PROPERTIES_LIKE_KEYWORDS) {
 		const val = schema[keyword];
 		if (isPlainObj(val)) {
@@ -266,10 +278,10 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		}
 	}
 
-	// ── Récurser dans dependencies (Point 3) ──
-	// `dependencies` peut contenir :
-	//   - Forme 1 (property deps) : { foo: ["bar", "baz"] } → tableau de strings, on skip
-	//   - Forme 2 (schema deps) : { foo: { required: [...] } } → objet schema, on normalise
+	// ── Recurse into dependencies (Point 3) ──
+	// `dependencies` can contain:
+	//   - Form 1 (property deps): { foo: ["bar", "baz"] } → string array, skip
+	//   - Form 2 (schema deps): { foo: { required: [...] } } → schema object, normalize
 	if (isPlainObj(schema.dependencies)) {
 		const deps = schema.dependencies as Record<
 			string,
@@ -285,10 +297,10 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 			const val = deps[key];
 			if (val === undefined) continue;
 			if (Array.isArray(val)) {
-				// Forme 1 : tableau de strings → laisser tel quel
+				// Form 1: string array → leave as-is
 				newDeps[key] = val;
 			} else if (isPlainObj(val)) {
-				// Forme 2 : sous-schema → normaliser récursivement
+				// Form 2: sub-schema → normalize recursively
 				const normalized = normalize(val as JSONSchema7Definition);
 				newDeps[key] = normalized;
 				if (normalized !== val) depsChanged = true;
@@ -302,10 +314,10 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		}
 	}
 
-	// ── Récurser dans items (tuple ou single) ──
+	// ── Recurse into items (tuple or single) ──
 	if (schema.items) {
 		if (Array.isArray(schema.items)) {
-			// Tuple : normaliser chaque élément
+			// Tuple: normalize each element
 			const items = schema.items as JSONSchema7Definition[];
 			let itemsChanged = false;
 			const newItems: JSONSchema7Definition[] = new Array(items.length);
@@ -330,7 +342,7 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		}
 	}
 
-	// ── Récurser dans les mots-clés single-schema ──
+	// ── Recurse into single-schema keywords ──
 	for (const key of SINGLE_SCHEMA_KEYWORDS) {
 		const val = schema[key];
 		if (val !== undefined && typeof val !== "boolean") {
@@ -342,15 +354,15 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		}
 	}
 
-	// ── Résoudre la double négation not(not(X)) → X ──
-	// Après la récursion dans les sous-schemas, `schema.not` est normalisé.
-	// Si `schema.not` est un objet qui ne contient QUE `not` (un « pur not »),
-	// alors `{ ...rest, not: { not: X } }` ≡ `{ ...rest, ...X }`.
+	// ── Resolve double negation not(not(X)) → X ──
+	// After recursing into sub-schemas, `schema.not` is normalized.
+	// If `schema.not` is an object that only contains `not` (a "pure not"),
+	// then `{ ...rest, not: { not: X } }` ≡ `{ ...rest, ...X }`.
 	//
-	// Logique propositionnelle : ¬¬P ≡ P
+	// Propositional logic: ¬¬P ≡ P
 	//
-	// On ne résout que le cas « pur » (schema.not n'a que `not` comme clé
-	// significative) pour éviter les faux-positifs dans les cas complexes.
+	// We only resolve the "pure" case (schema.not has only `not` as a
+	// significant key) to avoid false positives in complex cases.
 	if (
 		hasOwn(schema, "not") &&
 		isPlainObj(schema.not) &&
@@ -363,12 +375,12 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 			isPlainObj(notSchema.not) &&
 			typeof notSchema.not !== "boolean"
 		) {
-			// Extraire le contenu de not.not et le fusionner avec le reste du schema
+			// Extract the content of not.not and merge it into the rest of the schema
 			const innerSchema = notSchema.not as JSONSchema7;
 			const s = ensureCopy();
-			// Retirer `not` du schema courant
+			// Remove `not` from the current schema
 			delete s.not;
-			// Fusionner le contenu interne dans le schema courant
+			// Merge the inner content into the current schema
 			const innerKeys = Object.keys(innerSchema);
 			for (let i = 0; i < innerKeys.length; i++) {
 				const ik = innerKeys[i];
@@ -380,7 +392,7 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		}
 	}
 
-	// ── Récurser dans les mots-clés array-of-schema ──
+	// ── Recurse into array-of-schema keywords ──
 	for (const key of ARRAY_SCHEMA_KEYWORDS) {
 		const val = schema[key];
 		if (Array.isArray(val)) {

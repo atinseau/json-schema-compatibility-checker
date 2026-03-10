@@ -144,6 +144,10 @@ Vérification de compatibilité :
 
 ---
 
+### Runtime Validator
+
+**Runtime validator singleton** — The AJV instance used for runtime validation (`check(..., { data })` and `if/then/else` condition evaluation) is a module-level singleton in `src/runtime-validator.ts`. All `JsonSchemaCompatibilityChecker` instances share it. Compiled validators are cached per schema reference (`WeakMap`) and per schema structure (`LRU Map`). This design is intentional: AJV compilation is expensive and the caches rely on a single AJV instance. In worker-thread environments, each worker gets its own singleton via normal module isolation.
+
 ## Dépendances
 
 | Package | Usage |

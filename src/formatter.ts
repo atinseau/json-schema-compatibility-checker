@@ -1,14 +1,14 @@
-import type { SubsetResult } from "./types";
+import type { SubsetResult } from "./types.ts";
 
 // ─── Result Formatter ────────────────────────────────────────────────────────
 //
-// Formate un `SubsetResult` en chaîne lisible pour logs / debug.
+// Formats a `SubsetResult` into a human-readable string for logs / debug.
 
 /**
- * Formate une erreur sémantique en ligne lisible.
+ * Formats a semantic error into a readable line.
  *
- * @param e  L'erreur à formater
- * @returns  Ligne formatée avec le chemin, expected et received
+ * @param e  The error to format
+ * @returns  Formatted line with path, expected and received
  */
 function formatErrorLine(e: {
 	key: string;
@@ -19,11 +19,11 @@ function formatErrorLine(e: {
 }
 
 /**
- * Formate un SubsetResult en chaîne lisible (utile pour logs/debug).
+ * Formats a SubsetResult into a readable string (useful for logs/debug).
  *
- * @param label   Label descriptif du check (ex: "strict ⊆ loose")
- * @param result  Le résultat du check à formater
- * @returns       Chaîne multi-lignes formatée avec icônes et erreurs
+ * @param label   Descriptive label of the check (e.g. "strict ⊆ loose")
+ * @param result  The check result to format
+ * @returns       Multi-line formatted string with icons and errors
  *
  * @example
  * ```

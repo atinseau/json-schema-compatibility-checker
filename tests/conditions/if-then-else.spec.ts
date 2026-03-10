@@ -216,6 +216,235 @@ describe("Point 4 — mergeBranchInto fix", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  mergeBranchInto — multi-keyword branch regression
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("mergeBranchInto — multi-keyword branch regression", () => {
+	test("then with minLength + maxLength (two MIN/MAX keys)", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				mode: { type: "string" },
+				name: { type: "string", minLength: 1, maxLength: 200 },
+			},
+			required: ["mode", "name"],
+			if: {
+				properties: { mode: { const: "strict" } },
+				required: ["mode"],
+			},
+			then: {
+				properties: {
+					name: { type: "string", minLength: 5, maxLength: 50 },
+				},
+			},
+		};
+		const { resolved } = resolveConditions(schema, { mode: "strict" }, engine);
+		const nameProp = resolved.properties?.name as JSONSchema7;
+		// Both keywords from the then branch must be merged
+		expect(nameProp.minLength).toBe(5);
+		expect(nameProp.maxLength).toBe(50);
+	});
+
+	test("then with pattern + format (two branch-wins keys)", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				mode: { type: "string" },
+				value: { type: "string" },
+			},
+			required: ["mode", "value"],
+			if: {
+				properties: { mode: { const: "email" } },
+				required: ["mode"],
+			},
+			then: {
+				properties: {
+					value: { type: "string", format: "email", pattern: "^[^@]+@" },
+				},
+			},
+		};
+		const { resolved } = resolveConditions(schema, { mode: "email" }, engine);
+		const valueProp = resolved.properties?.value as JSONSchema7;
+		expect(valueProp.format).toBe("email");
+		expect(valueProp.pattern).toBe("^[^@]+@");
+	});
+
+	test("then with minLength + format (MIN key + branch-wins key)", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				mode: { type: "string" },
+				email: { type: "string", minLength: 1 },
+			},
+			required: ["mode", "email"],
+			if: {
+				properties: { mode: { const: "strict" } },
+				required: ["mode"],
+			},
+			then: {
+				properties: {
+					email: { type: "string", minLength: 5, format: "email" },
+				},
+			},
+		};
+		const { resolved } = resolveConditions(schema, { mode: "strict" }, engine);
+		const emailProp = resolved.properties?.email as JSONSchema7;
+		expect(emailProp.minLength).toBe(5);
+		expect(emailProp.format).toBe("email");
+	});
+
+	test("then with constraints + format (constraints key + branch-wins key)", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				mode: { type: "string" },
+				value: { type: "string", constraints: ["IsUuid"] },
+			},
+			required: ["mode", "value"],
+			if: {
+				properties: { mode: { const: "email" } },
+				required: ["mode"],
+			},
+			then: {
+				properties: {
+					value: {
+						type: "string",
+						format: "email",
+						constraints: ["IsEmail"],
+					},
+				},
+			},
+		};
+		const { resolved } = resolveConditions(schema, { mode: "email" }, engine);
+		const valueProp = resolved.properties?.value as JSONSchema7;
+		// format should be set (branch-wins)
+		expect(valueProp.format).toBe("email");
+		// constraints should be unioned
+		expect(valueProp.constraints).toContainEqual("IsUuid");
+		expect(valueProp.constraints).toContainEqual("IsEmail");
+	});
+
+	test("then with minItems + uniqueItems (MIN key + boolean key)", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				mode: { type: "string" },
+				tags: {
+					type: "array",
+					items: { type: "string" },
+					minItems: 0,
+					uniqueItems: false,
+				},
+			},
+			required: ["mode", "tags"],
+			if: {
+				properties: { mode: { const: "strict" } },
+				required: ["mode"],
+			},
+			then: {
+				properties: {
+					tags: {
+						type: "array",
+						items: { type: "string" },
+						minItems: 3,
+						uniqueItems: true,
+					},
+				},
+			},
+		};
+		const { resolved } = resolveConditions(schema, { mode: "strict" }, engine);
+		const tagsProp = resolved.properties?.tags as JSONSchema7;
+		expect(tagsProp.minItems).toBe(3);
+		expect(tagsProp.uniqueItems).toBe(true);
+	});
+
+	test("then with additionalProperties + minProperties (SUB_SCHEMA key + MIN key)", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				mode: { type: "string" },
+			},
+			additionalProperties: true,
+			minProperties: 1,
+			required: ["mode"],
+			if: {
+				properties: { mode: { const: "strict" } },
+				required: ["mode"],
+			},
+			then: {
+				additionalProperties: false,
+				minProperties: 3,
+			},
+		};
+		const { resolved } = resolveConditions(schema, { mode: "strict" }, engine);
+		expect(resolved.additionalProperties).toBe(false);
+		expect(resolved.minProperties).toBe(3);
+	});
+
+	test("else branch with multiple non-special keywords", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				mode: { type: "string" },
+				name: { type: "string", minLength: 1, maxLength: 200 },
+			},
+			required: ["mode", "name"],
+			if: {
+				properties: { mode: { const: "strict" } },
+				required: ["mode"],
+			},
+			then: {
+				properties: {
+					name: { type: "string", minLength: 10 },
+				},
+			},
+			else: {
+				properties: {
+					name: { type: "string", minLength: 3, maxLength: 100 },
+				},
+			},
+		};
+		// mode is "relaxed" → else branch applies
+		const { resolved } = resolveConditions(schema, { mode: "relaxed" }, engine);
+		const nameProp = resolved.properties?.name as JSONSchema7;
+		// Both keywords from the else branch must be merged
+		expect(nameProp.minLength).toBe(3);
+		expect(nameProp.maxLength).toBe(100);
+	});
+
+	test("then with three non-special keywords simultaneously", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				mode: { type: "string" },
+				value: { type: "string", minLength: 0 },
+			},
+			required: ["mode", "value"],
+			if: {
+				properties: { mode: { const: "strict" } },
+				required: ["mode"],
+			},
+			then: {
+				properties: {
+					value: {
+						type: "string",
+						minLength: 5,
+						maxLength: 50,
+						format: "email",
+					},
+				},
+			},
+		};
+		const { resolved } = resolveConditions(schema, { mode: "strict" }, engine);
+		const valueProp = resolved.properties?.value as JSONSchema7;
+		// All three non-special keywords must be present
+		expect(valueProp.minLength).toBe(5);
+		expect(valueProp.maxLength).toBe(50);
+		expect(valueProp.format).toBe("email");
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  2. if/then/else in pure subset check (without partial data)
 //
 //  The subset checker does NOT expand if/then/else into anyOf equivalent.
@@ -307,8 +536,9 @@ describe("if/then/else — pure subset check (no data)", () => {
 			required: ["kind", "value"],
 		};
 
+		// data must be a complete runtime instance that validates against both schemas
 		const result = checker.check(sub, conditionalSchema, {
-			subData: { kind: "text" },
+			data: { kind: "text", value: "hello" },
 		});
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSup.branch).toBe("then");

@@ -38,7 +38,7 @@ La comparaison de patterns regex utilise un **échantillonnage** (200 samples pa
 
 ## 4. `if/then/else` — nécessite des données discriminantes
 
-Les schemas avec `if/then/else` ne peuvent pas être comparés directement via `isSubset` car le merge brut ajoute les mots-clés conditionnels. Il faut utiliser `check(sub, sup, { subData })` avec les données discriminantes.
+Les schemas avec `if/then/else` ne peuvent pas être comparés directement via `isSubset` car le merge brut ajoute les mots-clés conditionnels. Il faut utiliser `check(sub, sup, { data })` avec les données discriminantes.
 
 ## 5. `$ref` — non supporté
 

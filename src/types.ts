@@ -3,39 +3,44 @@ import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 // ─── Public types ────────────────────────────────────────────────────────────
 
 export interface SchemaError {
-	/** Chemin normalisé vers la propriété concernée (ex: "user.name", "users[].name", "accountId") */
+	/** Normalized path to the concerned property (e.g. "user.name", "users[].name", "accountId") */
 	key: string;
-	/** Type ou valeur attendu(e) par le schema cible (sup) */
+	/** Type or value expected by the target schema (sup) */
 	expected: string;
-	/** Type ou valeur reçu(e) depuis le schema source (sub) */
+	/** Type or value received from the source schema (sub) */
 	received: string;
 }
 
 export interface SubsetResult {
-	/** true si sub ⊆ sup (toute valeur valide pour sub est valide pour sup) */
+	/** true if sub ⊆ sup (every value valid for sub is also valid for sup) */
 	isSubset: boolean;
-	/** Le schema résultant de l'intersection allOf(sub, sup), ou null si incompatible */
+	/** The schema resulting from the intersection allOf(sub, sup), or null if incompatible */
 	merged: JSONSchema7Definition | null;
-	/** Erreurs sémantiques décrivant les incompatibilités entre les deux schemas */
+	/** Semantic errors describing incompatibilities between the two schemas */
 	errors: SchemaError[];
 }
 
 /**
- * Options pour résoudre les if/then/else avant un check de subset.
- * Si `subData` est fourni, les conditions du sub sont résolues.
- * Si `supData` est aussi fourni, il est utilisé pour résoudre le sup ;
- * sinon `subData` est utilisé pour les deux.
+ * Options for runtime-aware subset checking.
+ *
+ * When `data` is provided, the checker:
+ *   1. Resolves `if/then/else` conditions in both `sub` and `sup` using `data`
+ *   2. Validates `data` against both resolved schemas via AJV
+ *   3. Narrows schemas using runtime values (e.g. enum materialization)
+ *   4. Performs the static subset check on the resolved/narrowed schemas
+ *
+ * `data` is a concrete runtime instance value — not just a partial discriminant.
+ * If `data` does not validate against `resolvedSub` or `resolvedSup`,
+ * the result will be `isSubset: false` with runtime validation errors.
  */
-export interface CheckConditionsOptions {
-	/** Runtime data for the sub schema — used for condition resolution and enum narrowing */
-	subData: unknown;
-	/** Runtime data for the sup schema (defaults to subData) — used for condition resolution and enum narrowing */
-	supData?: unknown;
+export interface CheckRuntimeOptions {
+	/** Runtime data used for condition resolution, runtime validation, and narrowing */
+	data: unknown;
 }
 
 /**
- * Résultat étendu de `check()` quand des options de conditions sont fournies.
- * Inclut les résultats de résolution pour sub et sup en plus du SubsetResult.
+ * Extended result from `check()` when runtime options are provided.
+ * Includes resolution results for sub and sup in addition to the SubsetResult.
  */
 export interface ResolvedSubsetResult extends SubsetResult {
 	resolvedSub: ResolvedConditionResult;
@@ -43,10 +48,87 @@ export interface ResolvedSubsetResult extends SubsetResult {
 }
 
 export interface ResolvedConditionResult {
-	/** Le schema avec les if/then/else résolus (aplatis) */
+	/** The schema with if/then/else resolved (flattened) */
 	resolved: JSONSchema7;
-	/** La branche qui a été appliquée ("then" | "else" | null si pas de condition) */
+	/** The branch that was applied ("then" | "else" | null if no condition) */
 	branch: "then" | "else" | null;
-	/** Le discriminant utilisé pour résoudre */
+	/** The discriminant used for resolution */
 	discriminant: Record<string, unknown>;
+}
+
+export type Constraint =
+	| string
+	| {
+			name: string;
+			params?: Record<string, unknown>;
+	  };
+
+export type Constraints = Constraint | Constraint[];
+
+// ─── Constraint Validator types ──────────────────────────────────────────────
+
+/**
+ * Result of a constraint validation.
+ */
+export interface ConstraintValidationResult {
+	/** Whether the value satisfies the constraint */
+	valid: boolean;
+	/** Human-readable message when `valid` is `false` */
+	message?: string;
+}
+
+/**
+ * A constraint validator function.
+ *
+ * Receives the value to validate and optional params defined
+ * in the schema's constraint definition.
+ *
+ * Must be synchronous — async validation is out of scope
+ * for this library. Wrap async checks in your application layer.
+ *
+ * @param value - The runtime value to validate
+ * @param params - The `params` object from the constraint definition, if any
+ * @returns The validation result
+ *
+ * @example
+ * ```ts
+ * const isUuid: ConstraintValidator = (value) => ({
+ *   valid: typeof value === "string" && /^[0-9a-f]{8}-/.test(value),
+ *   message: "Value must be a valid UUID",
+ * });
+ *
+ * const minAge: ConstraintValidator = (value, params) => ({
+ *   valid: typeof value === "number" && value >= (params?.min ?? 0),
+ *   message: `Value must be at least ${params?.min}`,
+ * });
+ * ```
+ */
+export type ConstraintValidator = (
+	value: unknown,
+	params?: Record<string, unknown>,
+) => ConstraintValidationResult;
+
+/**
+ * Registry mapping constraint names to their validator functions.
+ *
+ * Keys are constraint names as they appear in schema definitions
+ * (e.g. `"IsUuid"`, `"MinAge"`).
+ */
+export type ConstraintValidatorRegistry = Record<string, ConstraintValidator>;
+
+/**
+ * Options for the JsonSchemaCompatibilityChecker constructor.
+ */
+export interface CheckerOptions {
+	/**
+	 * Registry of custom constraint validators.
+	 *
+	 * When provided, the checker can validate runtime data against
+	 * custom constraints defined in schemas via the `constraints` keyword.
+	 *
+	 * Constraint names must match those used in schema definitions.
+	 * Unknown constraints (present in a schema but absent from the registry)
+	 * will be reported as errors during runtime validation.
+	 */
+	constraints?: ConstraintValidatorRegistry;
 }

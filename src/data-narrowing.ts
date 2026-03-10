@@ -3,23 +3,32 @@ import type {
 	JSONSchema7Definition,
 	JSONSchema7Type,
 } from "json-schema";
+import { validateFormat } from "./format-validator.ts";
 import { deepEqual, isPlainObj } from "./utils.ts";
 
 // ─── Data Narrowing ──────────────────────────────────────────────────────────
 //
-// Narrows a resolved schema using runtime data when the target schema
-// contains enum constraints that match the data values.
+// Narrows a resolved schema using runtime data when the opposite schema
+// contains value constraints that can be materialized safely.
+//
+// This module is intentionally limited to schema refinement. Full runtime
+// validation is handled elsewhere by the AJV-based validation layer used by
+// `check(sub, sup, { data })` when concrete data is provided.
 //
 // Use case: when `sub` is `{ type: "string" }` and `sup` is
 // `{ type: "string", enum: ["red", "green", "blue"] }`, and
-// `subData = "red"`, the sub schema is narrowed to
-// `{ type: "string", enum: ["red"] }` so that the subset check succeeds.
+// `data = "red"`, the sub schema is narrowed to
+// `{ type: "string", const: "red" }` so that the subset check succeeds.
 //
 // Rules:
-//   - Only narrows when the target schema has an `enum` (or `const`)
-//   - Only narrows when the runtime value is present in the target enum
-//   - If the value is NOT in the target enum, the schema is unchanged
-//   - If the target has no enum/const, the schema is unchanged
+//   - Narrows when the target schema has an `enum` (or `const`) and the runtime
+//     value matches one of the allowed values
+//   - Materializes the runtime value as `const` when the source schema already
+//     declares `enum`/`const` and the runtime value is compatible with it
+//   - Preserves the schema unchanged when the runtime value is incompatible
+//     with the source or target constraints
+//   - Keeps lightweight compatibility checks such as `format` to avoid
+//     narrowing with obviously invalid values
 //   - Recurses into object properties for complex schemas
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -46,11 +55,44 @@ function getTargetEnum(schema: JSONSchema7): JSONSchema7Type[] | undefined {
 	return undefined;
 }
 
+/**
+ * Checks whether a runtime value satisfies the schema's own enum/const
+ * constraints, when present.
+ */
+function matchesOwnValueConstraint(
+	schema: JSONSchema7,
+	data: unknown,
+): boolean {
+	if (Array.isArray(schema.enum)) {
+		return isValueInEnum(data, schema.enum);
+	}
+
+	if ("const" in schema) {
+		return deepEqual(schema.const, data);
+	}
+
+	return true;
+}
+
+/**
+ * Checks whether a runtime value satisfies the schema's own format constraint,
+ * when present.
+ */
+function matchesOwnFormatConstraint(
+	schema: JSONSchema7,
+	data: unknown,
+): boolean {
+	if (schema.format === undefined) return true;
+
+	const formatResult = validateFormat(data, schema.format);
+	return formatResult !== false;
+}
+
 // ─── Core Narrowing ──────────────────────────────────────────────────────────
 
 /**
- * Narrows a primitive schema by adding an enum constraint matching the
- * runtime data value, if that value is present in the target schema's enum.
+ * Narrows a primitive schema by materializing the runtime value when it is
+ * compatible with both the source schema and the target schema constraints.
  *
  * @param schema - The resolved schema to potentially narrow
  * @param data - The runtime data value
@@ -62,17 +104,21 @@ function narrowPrimitive(
 	data: unknown,
 	targetSchema: JSONSchema7,
 ): JSONSchema7 {
+	if (!matchesOwnValueConstraint(schema, data)) return schema;
+	if (!matchesOwnFormatConstraint(schema, data)) return schema;
+
 	const targetEnum = getTargetEnum(targetSchema);
-	if (targetEnum === undefined) return schema;
 
-	// Only narrow if the schema doesn't already have enum/const constraints
-	if (Array.isArray(schema.enum) || "const" in schema) return schema;
+	if (targetEnum !== undefined) {
+		if (!isValueInEnum(data, targetEnum)) return schema;
+		return { ...schema, const: data as JSONSchema7Type };
+	}
 
-	// Only narrow if the runtime value matches the target enum
-	if (!isValueInEnum(data, targetEnum)) return schema;
+	if (Array.isArray(schema.enum) || "const" in schema) {
+		return { ...schema, const: data as JSONSchema7Type };
+	}
 
-	// Narrow: add enum: [data] to the schema
-	return { ...schema, enum: [data as JSONSchema7Type] };
+	return schema;
 }
 
 /**
@@ -147,6 +193,10 @@ function narrowObjectProperties(
  * (e.g. `{ type: "string" }`) but the actual runtime value matches an
  * enum constraint in the target schema, the source schema is narrowed
  * to reflect the concrete value.
+ *
+ * Important: this function does not perform full runtime validation.
+ * Runtime validation of `data` against resolved schemas is handled separately
+ * by the AJV-based validation layer. This helper only performs safe refinement.
  *
  * @param schema - The resolved source schema to potentially narrow
  * @param data - The runtime data value (primitive or object)

@@ -15,7 +15,7 @@ beforeAll(() => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  evaluateCondition — enrichment (Point 5) + extended evaluation (Amélioration 2)
+//  evaluateCondition — enrichment (Point 5) + extended evaluation (Enhancement 2)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -219,14 +219,14 @@ describe("Point 5 — evaluateCondition enrichment", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Amélioration 2 — evaluateCondition : évaluation complète du if
+//  Enhancement 2 — evaluateCondition: complete if evaluation
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Amélioration 2 — evaluateCondition étendu", () => {
-	// ── 2.1 — if avec allOf ───────────────────────────────────────────────
+describe("Enhancement 2 — extended evaluateCondition", () => {
+	// ── 2.1 — if with allOf ───────────────────────────────────────────────
 
-	describe("2.1 — if avec allOf", () => {
-		test("allOf dans if : toutes les entrées matchent → then-branch", () => {
+	describe("2.1 — if with allOf", () => {
+		test("allOf in if: all entries match → then-branch", () => {
 			const schema: JSONSchema7 = {
 				type: "object",
 				properties: {
@@ -254,7 +254,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 			expect(branch).toBe("then");
 		});
 
-		test("allOf dans if : une entrée ne matche pas → else-branch", () => {
+		test("allOf in if: one entry does not match → else-branch", () => {
 			const schema: JSONSchema7 = {
 				type: "object",
 				properties: {
@@ -271,7 +271,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				then: { required: ["companyName"] },
 				else: { required: [] },
 			};
-			// type matche mais taxId absent → allOf échoue
+			// type matches but taxId absent → allOf fails
 			const { branch } = resolveConditions(
 				schema,
 				{
@@ -282,7 +282,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 			expect(branch).toBe("else");
 		});
 
-		test("Test B — if avec allOf + format (intégration)", () => {
+		test("Test B — if with allOf + format (integration)", () => {
 			const schema: JSONSchema7 = {
 				type: "object",
 				properties: {
@@ -424,7 +424,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 	// ── 2.4 — if avec not ─────────────────────────────────────────────────
 
 	describe("2.4 — if avec not", () => {
-		test("not dans if : contenu du not matche data → condition échoue → else", () => {
+		test("not in if: not content matches data → condition fails → else", () => {
 			const schema: JSONSchema7 = {
 				type: "object",
 				properties: {
@@ -437,7 +437,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				then: { required: ["companyName"] },
 				else: { required: [] },
 			};
-			// type="personal" matche le contenu du not → not(true) = false → else
+			// type="personal" matches the not content → not(true) = false → else
 			const { branch } = resolveConditions(
 				schema,
 				{
@@ -448,7 +448,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 			expect(branch).toBe("else");
 		});
 
-		test("not dans if : contenu du not ne matche pas → condition réussit → then", () => {
+		test("not in if: not content does not match → condition succeeds → then", () => {
 			const schema: JSONSchema7 = {
 				type: "object",
 				properties: {
@@ -461,7 +461,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				then: { required: ["companyName"] },
 				else: { required: [] },
 			};
-			// type="business" ne matche pas le contenu du not → not(false) = true → then
+			// type="business" does not match the not content → not(false) = true → then
 			const { branch } = resolveConditions(
 				schema,
 				{
@@ -473,10 +473,10 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 		});
 	});
 
-	// ── 2.5 — Propriétés imbriquées ───────────────────────────────────────
+	// ── 2.5 — nested properties (nested objects) ─────────────────────────
 
-	describe("2.5 — propriétés imbriquées (nested objects)", () => {
-		test("nested property avec const matche → then-branch", () => {
+	describe("2.5 — nested properties (nested objects)", () => {
+		test("nested property with matching const → then-branch", () => {
 			const schema: JSONSchema7 = {
 				type: "object",
 				properties: {
@@ -506,7 +506,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 			expect(branch).toBe("then");
 		});
 
-		test("nested property avec const différent → else-branch", () => {
+		test("nested property with different const → else-branch", () => {
 			const schema: JSONSchema7 = {
 				type: "object",
 				properties: {
@@ -537,7 +537,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 			expect(branch).toBe("else");
 		});
 
-		test("nested property avec data non-objet → skip (then par défaut)", () => {
+		test("nested property with non-object data → skip (then by default)", () => {
 			const schema: JSONSchema7 = {
 				type: "object",
 				properties: {
@@ -554,7 +554,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				then: { required: ["siret"] },
 				else: { required: [] },
 			};
-			// address n'est pas un objet → le check nested est skippé → then
+			// address is not an object → the nested check is skipped → then
 			const { branch } = resolveConditions(
 				schema,
 				{
@@ -566,9 +566,9 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 		});
 	});
 
-	// ── 2.6 — format dans evaluateCondition ───────────────────────────────
+	// ── 2.6 — format in evaluateCondition ─────────────────────────────────
 
-	describe("2.6 — format dans evaluateCondition", () => {
+	describe("2.6 — format in evaluateCondition", () => {
 		test("Test F — valeur email valide → then-branch", () => {
 			const schema: JSONSchema7 = {
 				type: "object",
@@ -640,7 +640,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 					properties: { contactLabel: { const: "Other" } },
 				},
 			};
-			// contact = 42 → typeof !== "string" → format check skippé → then
+			// contact = 42 → typeof !== "string" → format check skipped → then
 			const { branch } = resolveConditions(
 				schema,
 				{
@@ -729,7 +729,7 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 			expect(branch).toBe("else");
 		});
 
-		test("format inconnu → skip → then (pas de faux négatif)", () => {
+		test("unknown format → skip → then (no false negative)", () => {
 			const schema: JSONSchema7 = {
 				type: "object",
 				properties: { x: { type: "string" } },
@@ -746,14 +746,14 @@ describe("Amélioration 2 — evaluateCondition étendu", () => {
 				},
 				engine,
 			);
-			// Format inconnu → validateFormat retourne null → skip → then
+			// Unknown format → validateFormat returns null → skip → then
 			expect(branch).toBe("then");
 		});
 	});
 
 	// ── format dans DISCRIMINANT_INDICATORS ───────────────────────────────
 
-	test("format est dans les DISCRIMINANT_INDICATORS", () => {
+	test("format is in DISCRIMINANT_INDICATORS", () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {

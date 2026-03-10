@@ -448,12 +448,12 @@ summary(() => {
 	boxplot(() => {
 		bench("check+conditions: business output ⊆ form (resolved)", () =>
 			checker.check(businessOutput, conditionalFormSchema, {
-				subData: { accountType: "business" },
+				data: { accountType: "business" },
 			}),
 		);
 		bench("check+conditions: personal output ⊆ form (resolved)", () =>
 			checker.check(personalOutput, conditionalFormSchema, {
-				subData: { accountType: "personal" },
+				data: { accountType: "personal" },
 			}),
 		);
 	});

@@ -23,5 +23,5 @@
 		"noUnusedParameters": false,
 		"noPropertyAccessFromIndexSignature": false
 	},
-	"include": ["src", "tests", "benchmarks"]
+	"include": ["src", "tests", "benchmarks", "global.d.ts", "index.ts"]
 }

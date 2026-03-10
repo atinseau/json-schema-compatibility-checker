@@ -1,17 +1,30 @@
 import type { JSONSchema7 } from "json-schema";
-import { MergeEngine } from "./src";
+import { JsonSchemaCompatibilityChecker, MergeEngine } from "./src";
 
-const engine = new MergeEngine();
+const _merge = new MergeEngine();
+
+const checker = new JsonSchemaCompatibilityChecker({
+	constraints: {
+		IsUuid: () => {
+			return {
+				valid: false,
+				message: "Value must be a valid UUID",
+			};
+		},
+	},
+});
 
 const schema1: JSONSchema7 = {
 	type: "string",
-	enum: ["red", "green", "blue"],
+	constraints: ["IsUuid"],
 };
 
 const schema2: JSONSchema7 = {
 	type: "string",
 };
 
-const m1 = engine.mergeOrThrow(schema1, schema2);
+const result = checker.check(schema1, schema2, {
+	data: "Salut !",
+});
 
-console.log(m1);
+console.log(JSON.stringify(result, null, 2));

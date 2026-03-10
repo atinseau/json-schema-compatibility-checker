@@ -1,4 +1,4 @@
-# Types exportés
+# Exported Types
 
 ```ts
 import type {
@@ -6,7 +6,7 @@ import type {
   SchemaError,
   ResolvedConditionResult,
   ResolvedSubsetResult,
-  CheckConditionsOptions,
+  CheckRuntimeOptions,
 } from "json-schema-compatibility-checker";
 ```
 
@@ -16,11 +16,11 @@ import type {
 
 ```ts
 interface SchemaError {
-  /** Chemin normalisé vers la propriété concernée (ex: "user.name", "users[].name", "accountId") */
+  /** Normalized path to the concerned property (e.g. "user.name", "users[].name", "accountId") */
   key: string;
-  /** Type ou valeur attendu(e) par le schema cible (sup) */
+  /** Type or value expected by the target schema (sup) */
   expected: string;
-  /** Type ou valeur reçu(e) depuis le schema source (sub) */
+  /** Type or value received from the source schema (sub) */
   received: string;
 }
 ```
@@ -31,11 +31,11 @@ interface SchemaError {
 
 ```ts
 interface SubsetResult {
-  /** true si sub ⊆ sup */
+  /** true if sub ⊆ sup (every value valid for sub is also valid for sup) */
   isSubset: boolean;
-  /** Le schema résultant de l'intersection allOf(sub, sup), ou null si incompatible */
+  /** The schema resulting from the intersection allOf(sub, sup), or null if incompatible */
   merged: JSONSchema7Definition | null;
-  /** Erreurs sémantiques décrivant les incompatibilités entre les deux schemas */
+  /** Semantic errors describing incompatibilities between the two schemas */
   errors: SchemaError[];
 }
 ```
@@ -46,11 +46,11 @@ interface SubsetResult {
 
 ```ts
 interface ResolvedConditionResult {
-  /** Le schema avec les if/then/else résolus (aplatis) */
+  /** The schema with if/then/else resolved (flattened) */
   resolved: JSONSchema7;
-  /** La branche qui a été appliquée ("then" | "else" | null si pas de condition) */
+  /** The branch that was applied ("then" | "else" | null if no condition) */
   branch: "then" | "else" | null;
-  /** Le discriminant utilisé pour résoudre */
+  /** The discriminant used for resolution */
   discriminant: Record<string, unknown>;
 }
 ```
@@ -61,22 +61,42 @@ interface ResolvedConditionResult {
 
 ```ts
 interface ResolvedSubsetResult extends SubsetResult {
-  /** Résultat de résolution des conditions du sub */
+  /** Resolution result for the sub schema's conditions */
   resolvedSub: ResolvedConditionResult;
-  /** Résultat de résolution des conditions du sup */
+  /** Resolution result for the sup schema's conditions */
   resolvedSup: ResolvedConditionResult;
 }
 ```
 
 ---
 
-## `CheckConditionsOptions`
+## `CheckRuntimeOptions`
 
 ```ts
-interface CheckConditionsOptions {
-  /** Runtime data for the sub schema — used for condition resolution and enum narrowing */
-  subData: unknown;
-  /** Runtime data for the sup schema (defaults to subData) — used for condition resolution and enum narrowing */
-  supData?: unknown;
+interface CheckRuntimeOptions {
+  /** Runtime data used for condition resolution, runtime validation, and narrowing */
+  data: unknown;
 }
 ```
+
+When `data` is provided to `check(sub, sup, { data })`:
+
+1. **Condition resolution** — `if/then/else` branches in both `sub` and `sup` are resolved using `data`
+2. **Narrowing** — schemas are narrowed using runtime values (e.g. enum materialization)
+3. **Runtime validation** — `data` is validated against both resolved schemas via AJV
+4. **Subset check** — the static subset check runs on the resolved/narrowed schemas
+
+`data` is a **concrete runtime instance value**, not just a partial discriminant.
+If `data` does not validate against the resolved sub or sup schema, the result
+will be `isSubset: false` with runtime validation errors prefixed with `$sub` or `$sup`.
+
+### Static vs Runtime mode
+
+```ts
+// Static mode — no runtime data, purely structural comparison
+checker.check(sub, sup);
+
+// Runtime mode — data influences resolution, validation, and narrowing
+checker.check(sub, sup, { data: { kind: "text", value: "hello" } });
+```
+

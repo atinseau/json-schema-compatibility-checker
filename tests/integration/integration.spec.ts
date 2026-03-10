@@ -20,11 +20,11 @@ beforeAll(() => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Tests d'intégration globaux (multi-améliorations)
+//  Global integration tests (multi-enhancement)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Tests d'intégration globaux", () => {
-	test("not + additionalProperties + format combinés", () => {
+describe("Global integration tests", () => {
+	test("not + additionalProperties + format combined", () => {
 		const source: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -76,7 +76,7 @@ describe("Tests d'intégration globaux", () => {
 		);
 		expect(emailResult.branch).toBe("then");
 
-		// Phone contact (ne matche pas allOf car contactMethod != "email")
+		// Phone contact (does not match allOf because contactMethod != "email")
 		const phoneResult = resolveConditions(
 			schema,
 			{
@@ -88,14 +88,14 @@ describe("Tests d'intégration globaux", () => {
 		expect(phoneResult.branch).toBe("else");
 	});
 
-	test("double négation + subset check", () => {
-		// not(not(string)) devrait se comporter comme string
+	test("double negation + subset check", () => {
+		// not(not(string)) should behave like string
 		const sub: JSONSchema7 = { not: { not: { type: "string", minLength: 3 } } };
 		const sup: JSONSchema7 = { type: "string" };
 		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
 
-	test("format hiérarchie sans not", () => {
+	test("format hierarchy without not", () => {
 		const sub: JSONSchema7 = { type: "string", format: "email" };
 		const sup: JSONSchema7 = {
 			type: "string",
@@ -105,7 +105,7 @@ describe("Tests d'intégration globaux", () => {
 		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
 
-	test("evaluateCondition avec allOf + not + format combinés", () => {
+	test("evaluateCondition with allOf + not + format combined", () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -121,7 +121,7 @@ describe("Tests d'intégration globaux", () => {
 			then: { required: ["value"] },
 			else: { required: [] },
 		};
-		// type != "skip" et value est un email → allOf([not(skip), format(email)]) = true → then
+		// type != "skip" and value is an email → allOf([not(skip), format(email)]) = true → then
 		const { branch } = resolveConditions(
 			schema,
 			{
@@ -149,7 +149,7 @@ describe("Tests d'intégration globaux", () => {
 			then: { required: ["value"] },
 			else: { required: [] },
 		};
-		// type = "skip" → not matche → allOf échoue → else
+		// type = "skip" → not matches → allOf fails → else
 		const { branch } = resolveConditions(
 			schema,
 			{
@@ -161,8 +161,8 @@ describe("Tests d'intégration globaux", () => {
 		expect(branch).toBe("else");
 	});
 
-	test("additionalProperties: false + isSubset fonctionne en non-régression", () => {
-		// Cas classique qui doit continuer à fonctionner
+	test("additionalProperties: false + isSubset works (non-regression)", () => {
+		// Classic case that must continue to work
 		const closed: JSONSchema7 = {
 			type: "object",
 			properties: { name: { type: "string" } },

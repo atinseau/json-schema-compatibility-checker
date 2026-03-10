@@ -699,3 +699,92 @@ describe("resolveConditions with allOf containing if/then/else", () => {
 		expect(resolved.properties?.precision).toEqual({ type: "integer" });
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Condition resolution — constraints merging
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("condition resolution — constraints", () => {
+	test("then branch constraints are unioned with base constraints", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				kind: { type: "string" },
+				value: { type: "string", constraints: ["IsUuid"] },
+			},
+			required: ["kind", "value"],
+			if: { properties: { kind: { const: "email" } }, required: ["kind"] },
+			then: {
+				properties: {
+					value: { type: "string", constraints: ["IsEmail"] },
+				},
+			},
+		};
+
+		const data = { kind: "email", value: "test@example.com" };
+		const { resolved } = resolveConditions(schema, data, engine);
+
+		const valueProp = resolved.properties?.value as JSONSchema7;
+		// Both base ("IsUuid") and then-branch ("IsEmail") constraints should be present
+		expect(valueProp.constraints).toContainEqual("IsUuid");
+		expect(valueProp.constraints).toContainEqual("IsEmail");
+	});
+
+	test("else branch constraints are unioned when if does not match", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				kind: { type: "string" },
+				value: { type: "string", constraints: ["IsUuid"] },
+			},
+			required: ["kind", "value"],
+			if: { properties: { kind: { const: "email" } }, required: ["kind"] },
+			then: {
+				properties: {
+					value: { type: "string", constraints: ["IsEmail"] },
+				},
+			},
+			else: {
+				properties: {
+					value: { type: "string", constraints: ["BelongsToScope"] },
+				},
+			},
+		};
+
+		const data = { kind: "other", value: "some-value" };
+		const { resolved } = resolveConditions(schema, data, engine);
+
+		const valueProp = resolved.properties?.value as JSONSchema7;
+		expect(valueProp.constraints).toContainEqual("IsUuid");
+		expect(valueProp.constraints).toContainEqual("BelongsToScope");
+		expect(valueProp.constraints).not.toContainEqual("IsEmail");
+	});
+
+	test("duplicate constraints are deduplicated during branch merge", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				value: { type: "string", constraints: ["IsUuid"] },
+			},
+			required: ["value"],
+			if: { properties: { value: { minLength: 1 } } },
+			then: {
+				properties: {
+					value: {
+						type: "string",
+						constraints: ["IsUuid", "BelongsToScope"],
+					},
+				},
+			},
+		};
+
+		const data = { value: "abc" };
+		const { resolved } = resolveConditions(schema, data, engine);
+
+		const valueProp = resolved.properties?.value as JSONSchema7;
+		const arr = valueProp.constraints as string[];
+		// IsUuid should appear only once (deduplicated)
+		expect(arr.filter((c) => c === "IsUuid")).toHaveLength(1);
+		expect(arr).toContainEqual("BelongsToScope");
+	});
+});

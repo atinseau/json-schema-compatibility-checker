@@ -76,7 +76,7 @@ checker.isSubset({ type: "string" }, true); // → true
 
 ```ts
 check(sub: JSONSchema7Definition, sup: JSONSchema7Definition): SubsetResult
-check(sub: JSONSchema7Definition, sup: JSONSchema7Definition, options: CheckConditionsOptions): ResolvedSubsetResult
+check(sub: JSONSchema7Definition, sup: JSONSchema7Definition, options: CheckRuntimeOptions): ResolvedSubsetResult
 ```
 
 Comme `isSubset`, mais retourne un **résultat détaillé** avec les erreurs sémantiques.
@@ -305,18 +305,16 @@ console.log(personal.resolved.required);
 check(
   sub: JSONSchema7Definition,
   sup: JSONSchema7Definition,
-  options: CheckConditionsOptions
+  options: CheckRuntimeOptions
 ): ResolvedSubsetResult
 ```
 
-Résout les conditions `if/then/else` des deux schemas **puis** vérifie `sub ⊆ sup`. Utile quand le superset contient des `if/then/else` et que vous connaissez les valeurs discriminantes. Effectue aussi un **narrowing** du sub par rapport aux contraintes `enum`/`const` du sup en utilisant les données runtime.
+Runtime-aware subset check. Resolves `if/then/else` conditions in both schemas, validates the data against the resolved schemas, narrows schemas using runtime values, then performs the static subset check.
 
 ```ts
-interface CheckConditionsOptions {
-  /** Runtime data for the sub schema — used for condition resolution and enum narrowing */
-  subData: unknown;
-  /** Runtime data for the sup schema (defaults to subData) — used for condition resolution and enum narrowing */
-  supData?: unknown;
+interface CheckRuntimeOptions {
+  /** Concrete runtime instance — used for condition resolution, validation, and narrowing */
+  data: unknown;
 }
 
 interface ResolvedSubsetResult extends SubsetResult {
@@ -325,20 +323,22 @@ interface ResolvedSubsetResult extends SubsetResult {
 }
 ```
 
-### `subData` vs `supData` — quelle différence ?
+### What happens when `data` is provided?
 
-Chaque schema (`sub` et `sup`) peut contenir ses propres conditions `if/then/else`. Pour résoudre ces conditions, le checker a besoin de **données runtime** — des valeurs concrètes qui déterminent quelle branche (`then` ou `else`) s'applique.
+The checker executes the following pipeline:
 
-| Paramètre | Schema associé | Rôle | Obligatoire ? |
-|-----------|---------------|------|--------------|
-| `subData` | `sub` (candidat subset) | Évalue le `if` du schema `sub` pour choisir sa branche `then`/`else` | ✅ Oui |
-| `supData` | `sup` (superset cible) | Évalue le `if` du schema `sup` pour choisir sa branche `then`/`else` | ❌ Non (défaut = `subData`) |
+| Step | Description |
+|------|-------------|
+| 1. **Condition resolution** | `if/then/else` in both `sub` and `sup` are resolved using `data` |
+| 2. **Narrowing** | Schemas are narrowed using runtime values (e.g. enum materialization: `{ type: "string" }` + `data = "red"` → `{ type: "string", const: "red" }`) |
+| 3. **Runtime validation** | `data` is validated against both resolved schemas via AJV. If validation fails → `isSubset: false` with errors prefixed `$sub` or `$sup` |
+| 4. **Static subset check** | If validation passes, the standard merge-based subset check runs on the resolved/narrowed schemas |
 
-**Par défaut, `supData` prend la valeur de `subData`.** C'est le cas d'usage le plus courant : on vérifie la compatibilité de deux schemas pour **la même donnée** (ex. : "est-ce que cette donnée qui valide `sub` valide aussi `sup` ?").
+### Important: `data` is a concrete runtime instance
 
-**On utilise `supData` séparément** quand les deux schemas décrivent des **contextes différents** avec des données runtime distinctes — par exemple, un système de commandes où l'entrée et la sortie sont résolues à partir de canaux différents.
+`data` is **not** a partial discriminant — it's a real value that must validate against both schemas. If `data` is missing required fields or violates constraints, runtime validation catches it and returns `isSubset: false`.
 
-### Exemple — Résolution simple (même données pour les deux)
+### Example — Resolving conditions with complete data
 
 ```ts
 const conditionalSup = {
@@ -369,100 +369,99 @@ const sub = {
   required: ["kind", "value"],
 };
 
-// Sans résolution : false (le if/then/else brut ne matche pas)
+// Without resolution: false (if/then/else in sup causes merge mismatch)
 console.log(checker.isSubset(sub, conditionalSup)); // false
 
-// Avec résolution via options : true !
-// subData est utilisé pour résoudre les conditions des DEUX schemas (supData absent → défaut)
-const result = checker.check(sub, conditionalSup, { subData: { kind: "text" } });
+// With runtime data: true! Data resolves conditions AND validates against both schemas.
+const result = checker.check(sub, conditionalSup, {
+  data: { kind: "text", value: "hello" },
+});
 console.log(result.isSubset);          // true ✅
 console.log(result.resolvedSup.branch); // "then"
 ```
 
-### Exemple — `subData` ≠ `supData` (données différentes par schema)
-
-Imaginons un système de commandes. Les deux schemas (`inputSchema` et `orderSchema`) ont le même `if/then/else` sur le champ `channel`, mais ils décrivent des contextes distincts :
+### Example — Incomplete data triggers runtime validation failure
 
 ```ts
-// Schema de commande : accepte "card"/"paypal" pour le web, "card"/"cash" en magasin
-const orderSchema = {
+// Data is missing `value` — both schemas require it.
+// Runtime validation catches the missing field → isSubset: false
+const result = checker.check(sub, conditionalSup, {
+  data: { kind: "text" },
+});
+console.log(result.isSubset);  // false
+console.log(result.errors);    // [{ key: "$sub.value", expected: "...", received: "undefined" }, ...]
+```
+
+### Example — Business form with conditional required fields
+
+```ts
+const formSchema = {
   type: "object",
   properties: {
-    channel: { type: "string", enum: ["web", "pos"] },
-    payment: { type: "string" },
+    accountType: { type: "string", enum: ["personal", "business"] },
+    email: { type: "string", format: "email" },
+    companyName: { type: "string" },
+    taxId: { type: "string" },
+    firstName: { type: "string" },
+    lastName: { type: "string" },
   },
-  required: ["channel", "payment"],
+  required: ["accountType", "email"],
   if: {
-    properties: { channel: { const: "web" } },
-    required: ["channel"],
+    properties: { accountType: { const: "business" } },
+    required: ["accountType"],
   },
-  then: {
-    properties: { payment: { type: "string", enum: ["card", "paypal"] } },
-  },
-  else: {
-    properties: { payment: { type: "string", enum: ["card", "cash"] } },
-  },
+  then: { required: ["companyName", "taxId"] },
+  else: { required: ["firstName", "lastName"] },
 };
 
-// Schema d'entrée : plus restrictif, "card" uniquement pour le web, "cash" uniquement en magasin
-const inputSchema = {
+const businessOutput = {
   type: "object",
   properties: {
-    channel: { type: "string", enum: ["web", "pos"] },
-    payment: { type: "string" },
+    accountType: { const: "business", type: "string", enum: ["personal", "business"] },
+    email: { type: "string", format: "email" },
+    companyName: { type: "string", minLength: 1 },
+    taxId: { type: "string", minLength: 1 },
   },
-  required: ["channel", "payment"],
-  if: {
-    properties: { channel: { const: "web" } },
-    required: ["channel"],
-  },
-  then: {
-    properties: { payment: { type: "string", enum: ["card"] } },
-  },
-  else: {
-    properties: { payment: { type: "string", enum: ["cash"] } },
-  },
+  required: ["accountType", "email", "companyName", "taxId"],
+  additionalProperties: false,
 };
-```
 
-**Cas 1 — Même données** : l'entrée et la commande sont résolues pour le même canal.
-
-```ts
-// sub=web, sup=web → input.then ⊆ order.then → ["card"] ⊆ ["card", "paypal"] ✅
-const r1 = checker.check(inputSchema, orderSchema, { subData: { channel: "web" } });
-console.log(r1.isSubset);              // true
-console.log(r1.resolvedSub.branch);    // "then"
-console.log(r1.resolvedSup.branch);    // "then"
-```
-
-**Cas 2 — Données différentes** : l'entrée est résolue "web" mais la commande est résolue "pos".
-
-```ts
-// sub=web, sup=pos → input.then ⊆ order.else → ["card"] ⊆ ["card", "cash"] ✅
-const r2 = checker.check(inputSchema, orderSchema, {
-  subData: { channel: "web" },
-  supData: { channel: "pos" },
+// Complete business instance validates against both schemas
+const result = checker.check(businessOutput, formSchema, {
+  data: {
+    accountType: "business",
+    email: "ceo@acme.com",
+    companyName: "ACME Corp",
+    taxId: "123-456-789",
+  },
 });
-console.log(r2.isSubset);              // true
-console.log(r2.resolvedSub.branch);    // "then"  (résolu avec subData)
-console.log(r2.resolvedSup.branch);    // "else"  (résolu avec supData)
+console.log(result.isSubset); // true ✅
 ```
 
-**Cas 3 — Données différentes qui causent une incompatibilité** :
+### Example — Primitive data with format validation
 
 ```ts
-// sub=pos, sup=web → input.else ⊆ order.then → ["cash"] ⊆ ["card", "paypal"] ❌
-const r3 = checker.check(inputSchema, orderSchema, {
-  subData: { channel: "pos" },
-  supData: { channel: "web" },
-});
-console.log(r3.isSubset);              // false
-console.log(r3.resolvedSub.branch);    // "else"  (résolu avec subData → cash)
-console.log(r3.resolvedSup.branch);    // "then"  (résolu avec supData → card/paypal)
-// "cash" n'est pas dans ["card", "paypal"] → incompatible
+const schema = { type: "string", format: "email" };
+
+// Valid email → isSubset: true (A ⊆ A with valid data)
+const r1 = checker.check(schema, schema, { data: "test@example.com" });
+console.log(r1.isSubset); // true
+
+// Invalid email → isSubset: false (runtime validation fails)
+const r2 = checker.check(schema, schema, { data: "not-an-email" });
+console.log(r2.isSubset); // false
+console.log(r2.errors);   // [{ key: "$sub", expected: "format: email", received: "not-an-email" }, ...]
 ```
 
-> **En résumé** : `subData` résout les conditions de `sub`, `supData` résout celles de `sup`. Si vos deux schemas vivent dans le même contexte, omettez `supData` — il prendra automatiquement la valeur de `subData`. Utilisez `supData` uniquement quand les schemas décrivent des contextes runtime distincts.
+### Static vs Runtime — summary
+
+```ts
+// Static mode — no runtime data, purely structural
+checker.check(sub, sup);
+
+// Runtime mode — data influences resolution, validation, and narrowing
+checker.check(sub, sup, { data: concreteInstance });
+```
 
 ---
 

@@ -8,7 +8,13 @@ export {
 } from "./pattern-subset.ts";
 export { formatSchemaType } from "./semantic-errors.ts";
 export type {
-	CheckConditionsOptions,
+	CheckerOptions,
+	CheckRuntimeOptions,
+	Constraint,
+	Constraints,
+	ConstraintValidationResult,
+	ConstraintValidator,
+	ConstraintValidatorRegistry,
 	ResolvedConditionResult,
 	ResolvedSubsetResult,
 	SchemaError,

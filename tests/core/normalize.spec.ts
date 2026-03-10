@@ -234,3 +234,51 @@ describe("normalizer — edge cases", () => {
 		expect(result.enum).toBeDefined();
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  normalize — constraints
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("normalize — constraints", () => {
+	test("single string constraint is normalized to array", () => {
+		const schema: JSONSchema7 = { type: "string", constraints: "IsUuid" };
+		const result = checker.normalize(schema) as JSONSchema7;
+		expect(result.constraints).toEqual(["IsUuid"]);
+	});
+
+	test("single object constraint is normalized to array", () => {
+		const schema: JSONSchema7 = {
+			type: "string",
+			constraints: { name: "IsCustom", params: { min: 5 } },
+		};
+		const result = checker.normalize(schema) as JSONSchema7;
+		expect(result.constraints).toEqual([
+			{ name: "IsCustom", params: { min: 5 } },
+		]);
+	});
+
+	test("array constraints are left unchanged", () => {
+		const schema: JSONSchema7 = { type: "string", constraints: ["IsUuid"] };
+		const result = checker.normalize(schema) as JSONSchema7;
+		expect(result.constraints).toEqual(["IsUuid"]);
+	});
+
+	test("absent constraints remain absent", () => {
+		const schema: JSONSchema7 = { type: "string" };
+		const result = checker.normalize(schema) as JSONSchema7;
+		expect(result.constraints).toBeUndefined();
+	});
+
+	test("constraints inside properties are normalized", () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				id: { type: "string", constraints: "IsUuid" },
+			},
+		};
+		const result = checker.normalize(schema) as JSONSchema7;
+		const idProp = (result.properties as Record<string, JSONSchema7>)
+			.id as JSONSchema7;
+		expect(idProp.constraints).toEqual(["IsUuid"]);
+	});
+});

@@ -21,12 +21,12 @@ beforeAll(() => {
 //  Pattern — intersection, isPatternSubset, arePatternsEquivalent, isTrivialPattern
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Le merge engine ne peut pas calculer l'intersection de deux patterns.
-// Ces tests documentent le comportement réel et les cas où cela produit
-// des faux négatifs (checker dit false alors que la réponse est true).
+// The merge engine cannot compute the intersection of two patterns.
+// These tests document the actual behavior and the cases where it produces
+// false negatives (checker says false when the answer is true).
 
 describe("Pattern intersection — behavior and limitations", () => {
-	// ── Cas sûrs : comportement correct ────────────────────────────────────
+	// ── Safe cases: correct behavior ───────────────────────────────────────
 
 	describe("safe cases — correct behavior", () => {
 		test("same pattern on both sides → isSubset true", () => {
@@ -66,26 +66,26 @@ describe("Pattern intersection — behavior and limitations", () => {
 		});
 	});
 
-	// ── Merge engine : que produit intersect() avec deux patterns ? ────────
+	// ── Merge engine: what does intersect() produce with two patterns? ─────
 
 	describe("merge engine — intersect() with two different patterns", () => {
 		test("two different patterns: merged result contains BOTH patterns somehow", () => {
-			// Documenter ce que le merge engine fait réellement
+			// Document what the merge engine actually does
 			const result = checker.intersect(
 				{ type: "string", pattern: "^[A-Z]" },
 				{ type: "string", pattern: "[0-9]$" },
 			) as JSONSchema7 | null;
 
-			// Le merge NE retourne PAS null (pas de conflit détecté)
+			// The merge does NOT return null (no conflict detected)
 			expect(result).not.toBeNull();
 
-			// Documenter quel pattern survit dans le merge
-			// La lib de merge garde probablement un seul pattern ou les deux.
-			// Ce test documente le comportement réel, quel qu'il soit.
+			// Document which pattern survives in the merge
+			// The merge library probably keeps one pattern or both.
+			// This test documents the actual behavior, whatever it is.
 			if (result) {
-				// Au minimum, un pattern doit être présent
+				// At minimum, one pattern must be present
 				expect(result.pattern).toBeDefined();
-				// Log pour visibilité (le test passe dans tous les cas, il documente)
+				// Log for visibility (the test passes in all cases, it documents)
 				console.log(
 					"[pattern intersection] merged pattern =",
 					JSON.stringify(result.pattern),
@@ -116,14 +116,14 @@ describe("Pattern intersection — behavior and limitations", () => {
 		});
 	});
 
-	// ── Faux négatifs : checker dit false alors que c'est mathématiquement true ──
+	// ── False negatives: checker says false but mathematically should be true ──
 
 	describe("false negatives — checker says false but mathematically should be true", () => {
 		test("FIXED: ^[a-z]{3}$ ⊆ ^[a-z]+$ — 3 lowercase ⊆ any lowercase (was false negative, now fixed by sampling)", () => {
-			// Mathématiquement : toute string de 3 lettres minuscules satisfait aussi ^[a-z]+$
-			// Avant : le merge produisait un pattern combiné ≠ sub → faux négatif.
-			// Maintenant : isPatternSubset détecte l'inclusion par échantillonnage
-			// et retire le pattern de sup avant le merge.
+			// Mathematically: every 3-lowercase-letter string also satisfies ^[a-z]+$
+			// Before: the merge produced a combined pattern ≠ sub → false negative.
+			// Now: isPatternSubset detects inclusion by sampling
+			// and strips sup's pattern before the merge.
 			const sub = { type: "string" as const, pattern: "^[a-z]{3}$" };
 			const sup = { type: "string" as const, pattern: "^[a-z]+$" };
 
@@ -132,7 +132,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 		});
 
 		test("FIXED: ^[0-9]{3}$ ⊆ ^[0-9] — 3 digits ⊆ starts with digit (was false negative, now fixed by sampling)", () => {
-			// "123" matche les deux patterns, et tout ce qui matche ^[0-9]{3}$ matche aussi ^[0-9]
+			// "123" matches both patterns, and everything matching ^[0-9]{3}$ also matches ^[0-9]
 			const sub = { type: "string" as const, pattern: "^[0-9]{3}$" };
 			const sup = { type: "string" as const, pattern: "^[0-9]" };
 
@@ -141,7 +141,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 		});
 
 		test("FIXED: ^abc$ ⊆ ^[a-z]+$ — literal ⊆ class (was false negative, now fixed by sampling)", () => {
-			// "abc" est toujours dans l'ensemble des strings matching ^[a-z]+$
+			// "abc" is always in the set of strings matching ^[a-z]+$
 			const sub = { type: "string" as const, pattern: "^abc$" };
 			const sup = { type: "string" as const, pattern: "^[a-z]+$" };
 
@@ -150,7 +150,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 		});
 
 		test("FIXED: ^[A-Z]{2}[0-9]{3}$ ⊆ ^[A-Z] — plate format ⊆ starts with uppercase (was false negative, now fixed by sampling)", () => {
-			// Cas réaliste : un format de plaque comme "AB123" satisfait toujours ^[A-Z]
+			// Realistic case: a plate format like "AB123" always satisfies ^[A-Z]
 			const sub = { type: "string" as const, pattern: "^[A-Z]{2}[0-9]{3}$" };
 			const sup = { type: "string" as const, pattern: "^[A-Z]" };
 
@@ -163,22 +163,22 @@ describe("Pattern intersection — behavior and limitations", () => {
 				{ type: "string", pattern: "^[a-z]{3}$" },
 				{ type: "string", pattern: "^[a-z]+$" },
 			);
-			// Maintenant que le pattern de sup est retiré avant le merge,
-			// le merge produit un résultat structurellement identique à sub → isSubset true.
+			// Now that sup's pattern is stripped before the merge,
+			// the merge produces a result structurally identical to sub → isSubset true.
 			expect(result.isSubset).toBe(true);
 			expect(result.errors).toHaveLength(0);
 		});
 	});
 
-	// ── Cas correct avec deux patterns différents (pas de faux positif) ────
+	// ── Correct rejections with two different patterns (no false positive) ─
 
 	describe("correct rejections — two incompatible patterns", () => {
 		test("^[a-z]+$ ⊄ ^[0-9]+$ — letters ⊄ digits (correctly rejected)", () => {
 			const sub = { type: "string" as const, pattern: "^[a-z]+$" };
 			const sup = { type: "string" as const, pattern: "^[0-9]+$" };
 
-			// Les deux patterns n'ont aucune intersection utile pour le subset check.
-			// Le checker dit false, ce qui est correct ici.
+			// The two patterns have no useful intersection for the subset check.
+			// The checker says false, which is correct here.
 			expect(checker.isSubset(sub, sup)).toBe(false);
 		});
 
@@ -192,7 +192,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 		});
 	});
 
-	// ── Pattern dans des sous-schemas (properties, items) ─────────────────
+	// ── Pattern in sub-schemas (properties, items) ────────────────────────
 
 	describe("pattern in nested schemas", () => {
 		test("nested: sub.properties.name has pattern, sup.properties.name has no pattern → isSubset true", () => {
@@ -293,7 +293,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 		});
 	});
 
-	// ── Pattern + autres contraintes string ───────────────────────────────
+	// ── Pattern + other string constraints ────────────────────────────────
 
 	describe("pattern combined with other string constraints", () => {
 		test("sub has pattern + minLength, sup has only minLength → isSubset true", () => {
@@ -341,7 +341,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 		});
 	});
 
-	// ── check avec patterns ───────────────────────────────────────────────
+	// ── check with patterns ───────────────────────────────────────────────
 
 	describe("check with pattern constraints", () => {
 		test("source with pattern → target without pattern: connectable", () => {
@@ -397,14 +397,14 @@ describe("Pattern intersection — behavior and limitations", () => {
 				},
 				required: ["code"],
 			};
-			// FR12345 matche les deux, et tout ^FR[0-9]{5}$ ⊆ ^[A-Z]{2}[0-9]+$
+			// FR12345 matches both, and every ^FR[0-9]{5}$ ⊆ ^[A-Z]{2}[0-9]+$
 			// Sampling confirms: all generated strings from sub match sup.
 			const result = checker.check(source, target);
 			expect(result.isSubset).toBe(true); // FIXED — sampling confirms inclusion
 		});
 	});
 
-	// ── Résolution conditionnelle avec patterns ───────────────────────────
+	// ── Conditional resolution with patterns ──────────────────────────────
 
 	describe("resolveConditions — then/else branch adds pattern", () => {
 		test("then-branch adds pattern to resolved schema", () => {
@@ -463,7 +463,9 @@ describe("Pattern intersection — behavior and limitations", () => {
 				required: ["mode", "code"],
 			};
 
-			const result = checker.check(sub, sup, { subData: { mode: "strict" } });
+			const result = checker.check(sub, sup, {
+				data: { mode: "strict", code: "ABC" },
+			});
 			expect(result.isSubset).toBe(true);
 		});
 	});
@@ -473,12 +475,12 @@ describe("Pattern intersection — behavior and limitations", () => {
 //  isPatternSubset — direct unit tests
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Tests directs du module de vérification d'inclusion de patterns par
-// échantillonnage (sampling). Ces tests valident le comportement de la
-// fonction `isPatternSubset` indépendamment du subset checker.
+// Direct tests of the pattern inclusion checking module via
+// sampling. These tests validate the behavior of the
+// `isPatternSubset` function independently from the subset checker.
 
 describe("isPatternSubset — sampling-based regex inclusion", () => {
-	// ── Identité ───────────────────────────────────────────────────────────
+	// ── Identity ───────────────────────────────────────────────────────────
 
 	describe("identity — same pattern", () => {
 		test("identical patterns → true (fast path, no sampling needed)", () => {
@@ -496,7 +498,7 @@ describe("isPatternSubset — sampling-based regex inclusion", () => {
 		});
 	});
 
-	// ── Inclusion confirmée par échantillonnage ────────────────────────────
+	// ── Confirmed inclusions by sampling ───────────────────────────────────
 
 	describe("confirmed inclusions (true)", () => {
 		test("fixed quantifier ⊆ unbounded quantifier: ^[a-z]{3}$ ⊆ ^[a-z]+$", () => {
@@ -546,7 +548,7 @@ describe("isPatternSubset — sampling-based regex inclusion", () => {
 		});
 	});
 
-	// ── Exclusion confirmée par contre-exemple ─────────────────────────────
+	// ── Confirmed exclusions by counter-example ────────────────────────────
 
 	describe("confirmed exclusions (false)", () => {
 		test("letters ⊄ digits: ^[a-z]+$ ⊄ ^[0-9]+$", () => {
@@ -558,12 +560,12 @@ describe("isPatternSubset — sampling-based regex inclusion", () => {
 		});
 
 		test("unbounded ⊄ fixed: ^[a-z]+$ ⊄ ^[a-z]{3}$", () => {
-			// "ab" matche ^[a-z]+$ mais pas ^[a-z]{3}$
+			// "ab" matches ^[a-z]+$ but not ^[a-z]{3}$
 			expect(isPatternSubset("^[a-z]+$", "^[a-z]{3}$")).toBe(false);
 		});
 
 		test("wider range ⊄ narrower range: ^[a-z]+$ ⊄ ^[a-f]+$", () => {
-			// "g" matche ^[a-z]+$ mais pas ^[a-f]+$
+			// "g" matches ^[a-z]+$ but not ^[a-f]+$
 			expect(isPatternSubset("^[a-z]+$", "^[a-f]+$")).toBe(false);
 		});
 
@@ -576,14 +578,14 @@ describe("isPatternSubset — sampling-based regex inclusion", () => {
 		});
 
 		test("no-anchor ⊄ anchored: [0-9]+ ⊄ ^[0-9]+$ (unanchored allows prefix/suffix)", () => {
-			// "abc123def" matche [0-9]+ (partial) but might not match ^[0-9]+$ (full)
+			// "abc123def" matches [0-9]+ (partial) but might not match ^[0-9]+$ (full)
 			// Actually, unanchored sub generates strings that ARE just digits, so this might be true.
 			// Let's use a clearer case.
 			expect(isPatternSubset("^[a-z]*[0-9]+$", "^[0-9]+$")).toBe(false);
 		});
 	});
 
-	// ── Cas limites ────────────────────────────────────────────────────────
+	// ── Edge cases ─────────────────────────────────────────────────────────
 
 	describe("edge cases", () => {
 		test("invalid sub pattern → null", () => {
@@ -615,7 +617,7 @@ describe("isPatternSubset — sampling-based regex inclusion", () => {
 		});
 	});
 
-	// ── Patterns réalistes (cas d'usage orchestration) ─────────────────────
+	// ── Realistic patterns (orchestration use cases) ───────────────────────
 
 	describe("realistic patterns — orchestration use cases", () => {
 		test("SKU format ⊆ alphanumeric-dash: ^SKU-[0-9]{6}$ ⊆ ^[A-Z]+-[0-9]+$", () => {
