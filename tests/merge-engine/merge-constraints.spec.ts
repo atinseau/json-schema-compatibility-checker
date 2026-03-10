@@ -14,15 +14,28 @@ beforeAll(() => {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Merge engine — constraints custom keyword handling
 // ═══════════════════════════════════════════════════════════════════════════════
-
-// ── Merge (intersection / allOf) ─────────────────────────────────────────────
 //
-// Semantics: A ∩ B — a value must satisfy BOTH schemas simultaneously.
-// Therefore constraints from both sides must be accumulated (union),
-// deduplicated by deep equality.
+// Constraints are a RUNTIME-ONLY concept. They represent custom validators
+// (e.g. "IsUuid", "NotFoundConstraint") that can only be evaluated against
+// concrete data. The static path (normalize, merge, subset check, semantic
+// errors) completely ignores them:
+//
+//   - `normalize()` strips `constraints` from schemas
+//   - `engine.merge()` no longer applies constraint union/dedup post-processing
+//   - `isSubset()` / `check()` see schemas without constraints
+//   - Semantic errors never report constraint mismatches
+//
+// Runtime validation (`validateSchemaConstraints`) still evaluates constraints
+// when `check()` is called with `{ data, validate: true }`.
 
-describe("merge — constraints (intersection)", () => {
-	test("disjoint constraints are unioned", () => {
+// ── Intersect — constraints stripped from result ─────────────────────────────
+//
+// `checker.intersect()` calls `normalize()` on both inputs, which strips
+// the `constraints` keyword. The intersection result therefore never
+// contains constraints, regardless of what the inputs had.
+
+describe("intersect — constraints stripped from result", () => {
+	test("disjoint constraints are stripped from intersection result", () => {
 		const a: JSONSchema7 = {
 			type: "string",
 			constraints: ["IsUuid"],
@@ -35,12 +48,10 @@ describe("merge — constraints (intersection)", () => {
 		const result = checker.intersect(a, b) as JSONSchema7;
 
 		expect(result.type).toBe("string");
-		expect(result.constraints).toBeArrayOfSize(2);
-		expect(result.constraints).toContain("IsUuid");
-		expect(result.constraints).toContain("BelongsToScope");
+		expect(result.constraints).toBeUndefined();
 	});
 
-	test("identical simple constraints are deduplicated", () => {
+	test("identical constraints are stripped from intersection result", () => {
 		const a: JSONSchema7 = {
 			type: "string",
 			constraints: ["IsUuid"],
@@ -53,29 +64,10 @@ describe("merge — constraints (intersection)", () => {
 		const result = checker.intersect(a, b) as JSONSchema7;
 
 		expect(result.type).toBe("string");
-		expect(result.constraints).toBeArrayOfSize(1);
-		expect(result.constraints).toContain("IsUuid");
+		expect(result.constraints).toBeUndefined();
 	});
 
-	test("identical object constraints (same name + same params) are deduplicated", () => {
-		const a: JSONSchema7 = {
-			type: "string",
-			constraints: [{ name: "MinAge", params: { min: 18 } }],
-		};
-		const b: JSONSchema7 = {
-			type: "string",
-			constraints: [{ name: "MinAge", params: { min: 18 } }],
-		};
-
-		const result = checker.intersect(a, b) as JSONSchema7;
-
-		expect(result.constraints).toBeArrayOfSize(1);
-		expect(result.constraints).toEqual([
-			{ name: "MinAge", params: { min: 18 } },
-		]);
-	});
-
-	test("object constraints with same name but different params are both kept", () => {
+	test("object constraints are stripped from intersection result", () => {
 		const a: JSONSchema7 = {
 			type: "string",
 			constraints: [{ name: "MinAge", params: { min: 18 } }],
@@ -87,18 +79,11 @@ describe("merge — constraints (intersection)", () => {
 
 		const result = checker.intersect(a, b) as JSONSchema7;
 
-		expect(result.constraints).toBeArrayOfSize(2);
-		expect(result.constraints).toContainEqual({
-			name: "MinAge",
-			params: { min: 18 },
-		});
-		expect(result.constraints).toContainEqual({
-			name: "MinAge",
-			params: { min: 21 },
-		});
+		expect(result.type).toBe("string");
+		expect(result.constraints).toBeUndefined();
 	});
 
-	test("constraints on one side only are preserved", () => {
+	test("constraints on one side only are stripped", () => {
 		const a: JSONSchema7 = {
 			type: "string",
 			constraints: ["IsUuid"],
@@ -110,11 +95,10 @@ describe("merge — constraints (intersection)", () => {
 		const result = checker.intersect(a, b) as JSONSchema7;
 
 		expect(result.type).toBe("string");
-		expect(result.constraints).toBeArrayOfSize(1);
-		expect(result.constraints).toContain("IsUuid");
+		expect(result.constraints).toBeUndefined();
 	});
 
-	test("constraints on sup side only are added in merge", () => {
+	test("constraints on sup side only are stripped", () => {
 		const a: JSONSchema7 = {
 			type: "string",
 		};
@@ -126,8 +110,7 @@ describe("merge — constraints (intersection)", () => {
 		const result = checker.intersect(a, b) as JSONSchema7;
 
 		expect(result.type).toBe("string");
-		expect(result.constraints).toBeArrayOfSize(1);
-		expect(result.constraints).toContain("IsEmail");
+		expect(result.constraints).toBeUndefined();
 	});
 
 	test("neither side has constraints → no constraints in result", () => {
@@ -139,36 +122,7 @@ describe("merge — constraints (intersection)", () => {
 		expect(result.constraints).toBeUndefined();
 	});
 
-	test("merge is commutative for constraints", () => {
-		const a: JSONSchema7 = {
-			type: "string",
-			constraints: ["IsUuid", { name: "MaxLen", params: { max: 100 } }],
-		};
-		const b: JSONSchema7 = {
-			type: "string",
-			constraints: ["IsEmail", { name: "MaxLen", params: { max: 100 } }],
-		};
-
-		const resultAB = checker.intersect(a, b) as JSONSchema7;
-		const resultBA = checker.intersect(b, a) as JSONSchema7;
-
-		// Both should have 3 constraints (IsUuid, IsEmail, MaxLen — MaxLen deduplicated)
-		expect(resultAB.constraints).toBeArrayOfSize(3);
-		expect(resultBA.constraints).toBeArrayOfSize(3);
-
-		const abArr = resultAB.constraints as Constraint[];
-		const baArr = resultBA.constraints as Constraint[];
-
-		// Same set of constraints regardless of order
-		for (const c of abArr) {
-			expect(baArr).toContainEqual(c);
-		}
-		for (const c of baArr) {
-			expect(abArr).toContainEqual(c);
-		}
-	});
-
-	test("mixed simple and object constraints are unioned and deduplicated", () => {
+	test("mixed simple and object constraints are all stripped", () => {
 		const a: JSONSchema7 = {
 			type: "string",
 			constraints: [
@@ -188,37 +142,11 @@ describe("merge — constraints (intersection)", () => {
 
 		const result = checker.intersect(a, b) as JSONSchema7;
 
-		// IsUuid (deduped), BelongsToScope, IsCustom/Hello (deduped), IsCustom/World
-		expect(result.constraints).toBeArrayOfSize(4);
-		expect(result.constraints).toContainEqual("IsUuid");
-		expect(result.constraints).toContainEqual("BelongsToScope");
-		expect(result.constraints).toContainEqual({
-			name: "IsCustom",
-			params: { message: "Hello" },
-		});
-		expect(result.constraints).toContainEqual({
-			name: "IsCustom",
-			params: { message: "World" },
-		});
+		expect(result.type).toBe("string");
+		expect(result.constraints).toBeUndefined();
 	});
 
-	test("empty constraints array treated as no constraints", () => {
-		const a: JSONSchema7 = {
-			type: "string",
-			constraints: [],
-		};
-		const b: JSONSchema7 = {
-			type: "string",
-			constraints: ["IsUuid"],
-		};
-
-		const result = checker.intersect(a, b) as JSONSchema7;
-
-		expect(result.constraints).toBeArrayOfSize(1);
-		expect(result.constraints).toContain("IsUuid");
-	});
-
-	test("single constraint (non-array) is normalized into array for merge", () => {
+	test("single constraint (non-array) is stripped", () => {
 		const a: JSONSchema7 = {
 			type: "string",
 			constraints: "IsUuid",
@@ -230,37 +158,19 @@ describe("merge — constraints (intersection)", () => {
 
 		const result = checker.intersect(a, b) as JSONSchema7;
 
-		expect(result.constraints).toBeArrayOfSize(2);
-		expect(result.constraints).toContainEqual("IsUuid");
-		expect(result.constraints).toContainEqual("BelongsToScope");
-	});
-
-	test("single constraint merged with array constraints", () => {
-		const a: JSONSchema7 = {
-			type: "string",
-			constraints: "IsUuid",
-		};
-		const b: JSONSchema7 = {
-			type: "string",
-			constraints: ["IsEmail", "BelongsToScope"],
-		};
-
-		const result = checker.intersect(a, b) as JSONSchema7;
-
-		expect(result.constraints).toBeArrayOfSize(3);
-		expect(result.constraints).toContainEqual("IsUuid");
-		expect(result.constraints).toContainEqual("IsEmail");
-		expect(result.constraints).toContainEqual("BelongsToScope");
+		expect(result.type).toBe("string");
+		expect(result.constraints).toBeUndefined();
 	});
 });
 
 // ── Subset checking with constraints ─────────────────────────────────────────
 //
-// A ⊆ B ⟺ merge(A, B) ≡ A
-// More constraints = smaller set of valid values = easier to be a subset.
+// Since normalize() strips constraints before the subset check,
+// constraints have NO effect on isSubset(). Two schemas that differ
+// only by constraints are structurally equivalent.
 
-describe("subset checking — constraints", () => {
-	test("A with constraints ⊆ B without constraints (A is more constrained)", () => {
+describe("subset checking — constraints ignored in static path", () => {
+	test("A with constraints ⊆ B without constraints", () => {
 		const sub: JSONSchema7 = {
 			type: "string",
 			constraints: ["IsUuid"],
@@ -272,7 +182,7 @@ describe("subset checking — constraints", () => {
 		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
 
-	test("A without constraints ⊄ B with constraints (A is less constrained)", () => {
+	test("A without constraints ⊆ B with constraints (constraints ignored)", () => {
 		const sub: JSONSchema7 = {
 			type: "string",
 		};
@@ -281,7 +191,8 @@ describe("subset checking — constraints", () => {
 			constraints: ["IsUuid"],
 		};
 
-		expect(checker.isSubset(sub, sup)).toBe(false);
+		// Previously this was false — now constraints are ignored statically
+		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
 
 	test("identical constraints → A ⊆ B", () => {
@@ -297,7 +208,7 @@ describe("subset checking — constraints", () => {
 		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
 
-	test("A has superset of constraints → A ⊆ B (A is stricter)", () => {
+	test("A has superset of constraints → A ⊆ B", () => {
 		const sub: JSONSchema7 = {
 			type: "string",
 			constraints: ["IsUuid", "BelongsToScope"],
@@ -310,7 +221,7 @@ describe("subset checking — constraints", () => {
 		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
 
-	test("A has subset of constraints → A ⊄ B (A is less strict)", () => {
+	test("A has subset of constraints → A ⊆ B (constraints ignored)", () => {
 		const sub: JSONSchema7 = {
 			type: "string",
 			constraints: ["IsUuid"],
@@ -320,10 +231,11 @@ describe("subset checking — constraints", () => {
 			constraints: ["IsUuid", "BelongsToScope"],
 		};
 
-		expect(checker.isSubset(sub, sup)).toBe(false);
+		// Previously this was false — now constraints are ignored statically
+		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
 
-	test("A and B have different constraints → neither is subset", () => {
+	test("A and B have different constraints → both are subsets of each other (constraints ignored)", () => {
 		const a: JSONSchema7 = {
 			type: "string",
 			constraints: ["IsUuid"],
@@ -333,8 +245,9 @@ describe("subset checking — constraints", () => {
 			constraints: ["IsEmail"],
 		};
 
-		expect(checker.isSubset(a, b)).toBe(false);
-		expect(checker.isSubset(b, a)).toBe(false);
+		// Previously both were false — now constraints are ignored statically
+		expect(checker.isSubset(a, b)).toBe(true);
+		expect(checker.isSubset(b, a)).toBe(true);
 	});
 
 	test("single constraint form ⊆ array constraint form (normalized)", () => {
@@ -348,12 +261,35 @@ describe("subset checking — constraints", () => {
 		const sup: JSONSchema7 = { type: "string", constraints: "IsUuid" };
 		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
+
+	test("constraints on nested properties are ignored for subset check", () => {
+		const sub: JSONSchema7 = {
+			type: "object",
+			properties: {
+				accountId: { type: "string" },
+			},
+		};
+		const sup: JSONSchema7 = {
+			type: "object",
+			properties: {
+				accountId: {
+					type: "string",
+					constraints: ["NotFoundConstraint"],
+				},
+			},
+		};
+
+		// This is the exact user-reported bug scenario:
+		// output (sub) has accountId: string, input (sup) has accountId: string + constraint.
+		// The static check should pass — constraints are runtime-only.
+		expect(checker.isSubset(sub, sup)).toBe(true);
+	});
 });
 
 // ── Overlay (deep spread / last-writer-wins) ─────────────────────────────────
 //
-// Semantics: { ...base, ...override } — override replaces entirely.
-// constraints from override replace those from base when present.
+// Overlay does NOT go through normalize() — it's a raw schema operation.
+// Constraints from override replace those from base when present.
 // When override does not specify constraints, base constraints are kept.
 
 describe("overlay — constraints (last-writer-wins)", () => {
@@ -525,10 +461,10 @@ describe("overlay — constraints (last-writer-wins)", () => {
 	});
 });
 
-// ── Overlay vs Merge — semantic difference for constraints ───────────────────
+// ── Overlay vs Intersect — semantic difference ───────────────────────────────
 
-describe("overlay vs merge — constraints semantic difference", () => {
-	test("merge unions constraints, overlay replaces them", () => {
+describe("overlay vs intersect — constraints semantic difference", () => {
+	test("intersect strips constraints, overlay preserves them", () => {
 		const schemaA: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -550,14 +486,15 @@ describe("overlay vs merge — constraints semantic difference", () => {
 			required: ["value"],
 		};
 
-		// Merge: intersection → both constraints apply
-		const merged = checker.intersect(schemaA, schemaB) as JSONSchema7;
-		const mergedProps = merged.properties as Record<string, JSONSchema7>;
-		const mergedValue = mergedProps.value as JSONSchema7;
+		// Intersect: normalize() strips constraints → result has no constraints
+		const intersected = checker.intersect(schemaA, schemaB) as JSONSchema7;
+		const intersectedProps = intersected.properties as Record<
+			string,
+			JSONSchema7
+		>;
+		const intersectedValue = intersectedProps.value as JSONSchema7;
 
-		expect(mergedValue.constraints).toBeArrayOfSize(2);
-		expect(mergedValue.constraints).toContainEqual("IsUuid");
-		expect(mergedValue.constraints).toContainEqual("BelongsToScope");
+		expect(intersectedValue.constraints).toBeUndefined();
 
 		// Overlay: last-writer-wins → only B's constraints
 		const overlaid = engine.overlay(schemaA, schemaB) as JSONSchema7;
@@ -571,7 +508,7 @@ describe("overlay vs merge — constraints semantic difference", () => {
 // ── Immutability ─────────────────────────────────────────────────────────────
 
 describe("constraints — immutability", () => {
-	test("merge does not mutate input constraints arrays", () => {
+	test("intersect does not mutate input constraints arrays", () => {
 		const a: JSONSchema7 = {
 			type: "string",
 			constraints: ["IsUuid"],
@@ -616,10 +553,10 @@ describe("constraints — immutability", () => {
 	});
 });
 
-// ── Merge — constraints in patternProperties ─────────────────────────────────
+// ── Intersect — constraints in nested locations are stripped ──────────────────
 
-describe("merge — constraints in patternProperties", () => {
-	test("constraints inside same-pattern patternProperties are unioned", () => {
+describe("intersect — constraints in patternProperties stripped", () => {
+	test("constraints inside same-pattern patternProperties are stripped", () => {
 		const a: JSONSchema7 = {
 			type: "object",
 			patternProperties: {
@@ -638,35 +575,11 @@ describe("merge — constraints in patternProperties", () => {
 			"^x-"
 		] as JSONSchema7;
 
-		expect(pp.constraints).toBeArrayOfSize(2);
-		expect(pp.constraints).toContainEqual("IsUuid");
-		expect(pp.constraints).toContainEqual("BelongsToScope");
+		expect(pp.type).toBe("string");
+		expect(pp.constraints).toBeUndefined();
 	});
 
-	test("constraints deduplicated across patternProperties", () => {
-		const a: JSONSchema7 = {
-			type: "object",
-			patternProperties: {
-				"^x-": { type: "string", constraints: ["IsUuid"] },
-			},
-		};
-		const b: JSONSchema7 = {
-			type: "object",
-			patternProperties: {
-				"^x-": { type: "string", constraints: ["IsUuid"] },
-			},
-		};
-
-		const result = checker.intersect(a, b) as JSONSchema7;
-		const pp = (result.patternProperties as Record<string, JSONSchema7>)[
-			"^x-"
-		] as JSONSchema7;
-
-		expect(pp.constraints).toBeArrayOfSize(1);
-		expect(pp.constraints).toContainEqual("IsUuid");
-	});
-
-	test("constraints on one side only in patternProperties are preserved", () => {
+	test("constraints on one side only in patternProperties are stripped", () => {
 		const a: JSONSchema7 = {
 			type: "object",
 			patternProperties: {
@@ -685,15 +598,13 @@ describe("merge — constraints in patternProperties", () => {
 			"^x-"
 		] as JSONSchema7;
 
-		expect(pp.constraints).toBeArrayOfSize(1);
-		expect(pp.constraints).toContainEqual("IsUuid");
+		expect(pp.type).toBe("string");
+		expect(pp.constraints).toBeUndefined();
 	});
 });
 
-// ── Merge — constraints in tuple items ───────────────────────────────────────
-
-describe("merge — constraints in tuple items", () => {
-	test("constraints inside tuple items at same index are unioned", () => {
+describe("intersect — constraints in tuple items stripped", () => {
+	test("constraints inside tuple items are stripped", () => {
 		const a: JSONSchema7 = {
 			type: "array",
 			items: [{ type: "string", constraints: ["IsUuid"] }, { type: "number" }],
@@ -707,12 +618,11 @@ describe("merge — constraints in tuple items", () => {
 		const items = result.items as JSONSchema7[];
 		const first = items[0] as JSONSchema7;
 
-		expect(first.constraints).toBeArrayOfSize(2);
-		expect(first.constraints).toContainEqual("IsUuid");
-		expect(first.constraints).toContainEqual("IsEmail");
+		expect(first.type).toBe("string");
+		expect(first.constraints).toBeUndefined();
 	});
 
-	test("constraints on only one side of a tuple item are preserved", () => {
+	test("constraints on only one side of a tuple item are stripped", () => {
 		const a: JSONSchema7 = {
 			type: "array",
 			items: [{ type: "string", constraints: ["IsUuid"] }],
@@ -726,33 +636,13 @@ describe("merge — constraints in tuple items", () => {
 		const items = result.items as JSONSchema7[];
 		const first = items[0] as JSONSchema7;
 
-		expect(first.constraints).toBeArrayOfSize(1);
-		expect(first.constraints).toContainEqual("IsUuid");
-	});
-
-	test("constraints deduplicated across tuple items", () => {
-		const a: JSONSchema7 = {
-			type: "array",
-			items: [{ type: "string", constraints: ["IsUuid"] }],
-		};
-		const b: JSONSchema7 = {
-			type: "array",
-			items: [{ type: "string", constraints: ["IsUuid"] }],
-		};
-
-		const result = checker.intersect(a, b) as JSONSchema7;
-		const items = result.items as JSONSchema7[];
-		const first = items[0] as JSONSchema7;
-
-		expect(first.constraints).toBeArrayOfSize(1);
-		expect(first.constraints).toContainEqual("IsUuid");
+		expect(first.type).toBe("string");
+		expect(first.constraints).toBeUndefined();
 	});
 });
 
-// ── Merge — constraints in dependencies (schema form) ────────────────────────
-
-describe("merge — constraints in dependencies (schema form)", () => {
-	test("constraints inside schema-form dependencies are unioned", () => {
+describe("intersect — constraints in dependencies (schema form) stripped", () => {
+	test("constraints inside schema-form dependencies are stripped", () => {
 		const a: JSONSchema7 = {
 			type: "object",
 			dependencies: {
@@ -780,9 +670,8 @@ describe("merge — constraints in dependencies (schema form)", () => {
 		const bar = (dep.properties as Record<string, JSONSchema7>)
 			.bar as JSONSchema7;
 
-		expect(bar.constraints).toBeArrayOfSize(2);
-		expect(bar.constraints).toContainEqual("IsUuid");
-		expect(bar.constraints).toContainEqual("IsEmail");
+		expect(bar.type).toBe("string");
+		expect(bar.constraints).toBeUndefined();
 	});
 
 	test("array-form dependencies are left untouched", () => {
@@ -802,38 +691,6 @@ describe("merge — constraints in dependencies (schema form)", () => {
 		// Array-form deps are unioned by the merge engine (not constraints logic)
 		expect(dep).toContain("bar");
 		expect(dep).toContain("baz");
-	});
-
-	test("constraints deduplicated across schema-form dependencies", () => {
-		const a: JSONSchema7 = {
-			type: "object",
-			dependencies: {
-				foo: {
-					properties: {
-						bar: { type: "string", constraints: ["IsUuid"] },
-					},
-				},
-			},
-		};
-		const b: JSONSchema7 = {
-			type: "object",
-			dependencies: {
-				foo: {
-					properties: {
-						bar: { type: "string", constraints: ["IsUuid"] },
-					},
-				},
-			},
-		};
-
-		const result = checker.intersect(a, b) as JSONSchema7;
-		const dep = (result.dependencies as Record<string, JSONSchema7>)
-			.foo as JSONSchema7;
-		const bar = (dep.properties as Record<string, JSONSchema7>)
-			.bar as JSONSchema7;
-
-		expect(bar.constraints).toBeArrayOfSize(1);
-		expect(bar.constraints).toContainEqual("IsUuid");
 	});
 });
 

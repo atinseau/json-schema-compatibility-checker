@@ -44,7 +44,7 @@ describe("constraint validator — constructor", () => {
 		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
 
-	test("structural subset check correctly detects constraint mismatch with validators registered", () => {
+	test("constraint mismatch is ignored in static subset check (constraints are runtime-only)", () => {
 		const checker = new JsonSchemaCompatibilityChecker({
 			constraints: {
 				IsUuid: (value) => ({
@@ -59,7 +59,9 @@ describe("constraint validator — constructor", () => {
 		const sub: JSONSchema7 = { type: "string", constraints: ["IsUuid"] };
 		const sup: JSONSchema7 = { type: "string", constraints: ["IsEmail"] };
 
-		expect(checker.isSubset(sub, sup)).toBe(false);
+		// Constraints are stripped during normalization — static check sees
+		// both as { type: "string" }, which are structurally equal.
+		expect(checker.isSubset(sub, sup)).toBe(true);
 	});
 });
 
@@ -238,7 +240,7 @@ describe("constraint validator — runtime validation", () => {
 		);
 	});
 
-	test("no constraint validators registered → constraints are not validated at runtime", () => {
+	test("no constraint validators registered → unregistered constraints produce errors at runtime", () => {
 		const checkerNoValidators = new JsonSchemaCompatibilityChecker();
 
 		const sub: JSONSchema7 = {
@@ -256,14 +258,23 @@ describe("constraint validator — runtime validation", () => {
 			required: ["id"],
 		};
 
-		// Even with invalid data, no constraint errors because no validators registered
+		// With validate: true, unregistered constraints are reported as errors
 		const result = checkerNoValidators.check(sub, sup, {
 			data: { id: "not-a-uuid" },
 			validate: true,
 		});
 
-		// Static check passes (same constraints), and no runtime constraint errors
-		expect(result.isSubset).toBe(true);
+		// Static check passes (same constraints), but runtime reports unknown constraints
+		expect(result.isSubset).toBe(false);
+		expect(result.errors.length).toBeGreaterThan(0);
+		expect(result.errors).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					expected: "constraint: IsUuid",
+					received: "unknown constraint (not registered)",
+				}),
+			]),
+		);
 	});
 
 	test("check without data does not trigger constraint validation", () => {
