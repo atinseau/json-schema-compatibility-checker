@@ -196,7 +196,26 @@ function mergeBranchInto(
 					existing as JSONSchema7Definition,
 					branchProp as JSONSchema7Definition,
 				);
-				mergedProps[key] = (merged ?? branchProp) as JSONSchema7Definition;
+				let mergedProp = (merged ?? branchProp) as JSONSchema7Definition;
+
+				// The merge engine does not handle the custom `constraints`
+				// keyword — it uses identity/first-wins for unknown keywords.
+				// We need to manually union + dedup constraints from both
+				// the existing property and the branch property so that all
+				// runtime constraints are preserved in the resolved schema.
+				if (typeof mergedProp !== "boolean") {
+					const existingObj = existing as JSONSchema7;
+					const branchObj = branchProp as JSONSchema7;
+					const unionedConstraints = mergeConstraints(
+						existingObj.constraints,
+						branchObj.constraints,
+					);
+					if (unionedConstraints !== undefined) {
+						mergedProp = { ...mergedProp, constraints: unionedConstraints };
+					}
+				}
+
+				mergedProps[key] = mergedProp;
 			} else {
 				mergedProps[key] = branchProp;
 			}

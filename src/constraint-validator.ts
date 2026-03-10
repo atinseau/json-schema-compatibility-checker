@@ -77,13 +77,13 @@ function validateValue(
  * `items` (single schema and tuple form), `additionalProperties` (schema form),
  * `dependencies` (schema form).
  *
- * @precondition `registry` must be non-empty. Callers should check
- *   `Object.keys(registry).length > 0` before calling this function
- *   to avoid unnecessary recursion into schemas that have no validators.
+ * When a schema declares a constraint that is not present in the registry,
+ * an "unknown constraint (not registered)" error is produced. This ensures
+ * that unregistered constraints are never silently ignored at runtime.
  *
  * @param schema - The resolved/narrowed schema containing constraints
  * @param data - The runtime data to validate
- * @param registry - The constraint validator registry (must be non-empty)
+ * @param registry - The constraint validator registry (may be empty)
  * @param path - The current property path (for error reporting)
  * @returns Array of schema errors (empty if all constraints pass)
  */

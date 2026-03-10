@@ -1,5 +1,5 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import type { Constraint, SchemaError } from "./types.ts";
+import type { SchemaError } from "./types.ts";
 import { deepEqual, hasOwn, isPlainObj } from "./utils.ts";
 
 // ─── Semantic Error Generator ────────────────────────────────────────────────
@@ -55,30 +55,7 @@ function formatEnumValues(values: unknown[]): string {
 export function formatSchemaType(
 	def: JSONSchema7Definition | undefined,
 ): string {
-	const base = formatSchemaTypeInternal(def);
-	if (def === undefined || typeof def === "boolean") return base;
-	return base + formatConstraintsSuffix(def as JSONSchema7);
-}
-
-/**
- * Formats the constraints suffix for a schema type description.
- * Returns an empty string if there are no constraints.
- *
- * @example
- * formatConstraintsSuffix({ type: "string", constraints: ["IsUuid", "BelongsToScope"] })
- * // → " [IsUuid, BelongsToScope]"
- *
- * formatConstraintsSuffix({ type: "string" })
- * // → ""
- */
-function formatConstraintsSuffix(schema: JSONSchema7): string {
-	const constraints = schema.constraints;
-	if (constraints === undefined) return "";
-
-	const arr = Array.isArray(constraints) ? constraints : [constraints];
-	if (arr.length === 0) return "";
-
-	return ` [${arr.map(formatCustomConstraint).join(", ")}]`;
+	return formatSchemaTypeInternal(def);
 }
 
 function formatSchemaTypeInternal(
@@ -286,73 +263,6 @@ function typesAreCompatible(
 	}
 
 	return true;
-}
-
-// ─── Custom Constraint Helpers ───────────────────────────────────────────────
-
-/**
- * Formats a custom constraint into a readable string.
- * @example formatCustomConstraint("IsUuid") → "IsUuid"
- * @example formatCustomConstraint({ name: "MinAge", params: { min: 21 } }) → 'MinAge({"min":21})'
- * @example formatCustomConstraint({ name: "IsCustom" }) → "IsCustom"
- */
-function formatCustomConstraint(c: Constraint): string {
-	if (typeof c === "string") return c;
-	if (c.params && Object.keys(c.params).length > 0) {
-		return `${c.name}(${JSON.stringify(c.params)})`;
-	}
-	return c.name;
-}
-
-/**
- * Formats a list of custom constraints into a readable string.
- */
-function formatCustomConstraintList(cs: Constraint[]): string {
-	return cs.map(formatCustomConstraint).join(", ");
-}
-
-/**
- * Compares custom constraints between sub and sup.
- *
- * For sub ⊆ sup, every constraint in sup must have an exact match
- * (by deep equality) in sub. Missing constraints are reported as errors.
- */
-function checkCustomConstraints(
-	sub: JSONSchema7,
-	sup: JSONSchema7,
-	path: string,
-	errors: SchemaError[],
-): void {
-	const supConstraints = sup.constraints;
-	const subConstraints = sub.constraints;
-
-	// If sup has no constraints, nothing to check
-	if (supConstraints === undefined) return;
-
-	const supArr = Array.isArray(supConstraints)
-		? supConstraints
-		: [supConstraints];
-	const subArr =
-		subConstraints === undefined
-			? []
-			: Array.isArray(subConstraints)
-				? subConstraints
-				: [subConstraints];
-
-	// Find constraints in sup that are missing from sub
-	for (const supC of supArr) {
-		const found = subArr.some((subC) => deepEqual(subC, supC));
-		if (!found) {
-			errors.push({
-				key: path || "$root",
-				expected: `constraint: ${formatCustomConstraint(supC)}`,
-				received:
-					subArr.length > 0
-						? `constraints: ${formatCustomConstraintList(subArr)}`
-						: "no constraints",
-			});
-		}
-	}
 }
 
 // ─── Constraint Helpers ──────────────────────────────────────────────────────
@@ -1001,9 +911,6 @@ export function computeSemanticErrors(
 			}
 		}
 
-		// ── Custom constraints ──
-		checkCustomConstraints(subSchema, supSchema, path, errors);
-
 		// ── Object-level constraints ──
 		checkObjectConstraints(subSchema, supSchema, path, errors);
 
@@ -1064,9 +971,6 @@ export function computeSemanticErrors(
 				});
 			}
 		}
-
-		// ── Custom constraints ──
-		checkCustomConstraints(subSchema, supSchema, path, errors);
 
 		// ── Array-level constraints ──
 		checkArrayConstraints(subSchema, supSchema, path, errors);
@@ -1137,9 +1041,6 @@ export function computeSemanticErrors(
 
 	// ── Same-type constraint comparison ──
 	// Types are compatible (or unspecified), now check individual keywords.
-
-	// ── Custom constraints (applies to all types) ──
-	checkCustomConstraints(subSchema, supSchema, path, errors);
 
 	if (
 		isNumericType(subType) ||

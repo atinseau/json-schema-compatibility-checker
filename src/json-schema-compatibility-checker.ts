@@ -254,30 +254,30 @@ export class JsonSchemaCompatibilityChecker {
 
 				// ── Constraint validation ──
 				// Validate runtime data against custom constraints in both schemas.
-				// Only runs if constraint validators were registered in the constructor.
-				if (Object.keys(this.constraintValidators).length > 0) {
-					runtimeErrors.push(
-						...this.prefixRuntimeErrors(
-							validateSchemaConstraints(
-								narrowedSubResolved,
-								data,
-								this.constraintValidators,
-							),
-							"$sub",
+				// Always runs when validate: true — if a schema declares constraints
+				// that are not registered in the registry, validateSchemaConstraints
+				// will report them as "unknown constraint (not registered)" errors.
+				runtimeErrors.push(
+					...this.prefixRuntimeErrors(
+						validateSchemaConstraints(
+							narrowedSubResolved,
+							data,
+							this.constraintValidators,
 						),
-					);
+						"$sub",
+					),
+				);
 
-					runtimeErrors.push(
-						...this.prefixRuntimeErrors(
-							validateSchemaConstraints(
-								narrowedSupResolved,
-								data,
-								this.constraintValidators,
-							),
-							"$sup",
+				runtimeErrors.push(
+					...this.prefixRuntimeErrors(
+						validateSchemaConstraints(
+							narrowedSupResolved,
+							data,
+							this.constraintValidators,
 						),
-					);
-				}
+						"$sup",
+					),
+				);
 
 				if (runtimeErrors.length > 0) {
 					return {

@@ -253,16 +253,22 @@ export function normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		}
 	}
 
-	// ── Normalize constraints to array form ──
-	// The `constraints` custom keyword accepts `Constraint | Constraint[]`.
-	// Canonicalize to always be an array so that deepEqual comparisons
-	// in the subset checker work correctly.
-	if (
-		hasOwn(schema, "constraints") &&
-		schema.constraints !== undefined &&
-		!Array.isArray(schema.constraints)
-	) {
-		ensureCopy().constraints = [schema.constraints];
+	// ── Strip constraints from the static path ──
+	// The `constraints` keyword is a runtime-only concept: it represents
+	// custom validators (e.g. "IsUuid", "NotFoundConstraint") that can only
+	// be evaluated against concrete data. Including them in the normalized
+	// schema would cause false negatives in the structural subset check
+	// (e.g. `{ type: "string" }` would fail to be recognized as a subset of
+	// `{ type: "string", constraints: ["X"] }` because the merge adds the
+	// constraint to the result, making merged ≠ sub).
+	//
+	// Stripping here is safe: the runtime validation path
+	// (`validateSchemaConstraints`) receives the original resolved/narrowed
+	// schemas that have NOT been through `normalize()`, so constraints are
+	// still available for runtime evaluation.
+	if (hasOwn(schema, "constraints") && schema.constraints !== undefined) {
+		const s = ensureCopy();
+		delete s.constraints;
 	}
 
 	// ── Recurse into properties & patternProperties (Point 2) ──
