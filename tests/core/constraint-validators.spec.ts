@@ -111,6 +111,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(sub, sup, {
 			data: { id: "550e8400-e29b-41d4-a716-446655440000" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(true);
@@ -135,6 +136,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(sub, sup, {
 			data: { id: "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -159,7 +161,10 @@ describe("constraint validator — runtime validation", () => {
 			required: ["age"],
 		};
 
-		const result = checker.check(schema, schema, { data: { age: 21 } });
+		const result = checker.check(schema, schema, {
+			data: { age: 21 },
+			validate: true,
+		});
 		expect(result.isSubset).toBe(true);
 	});
 
@@ -175,7 +180,10 @@ describe("constraint validator — runtime validation", () => {
 			required: ["age"],
 		};
 
-		const result = checker.check(schema, schema, { data: { age: 15 } });
+		const result = checker.check(schema, schema, {
+			data: { age: 15 },
+			validate: true,
+		});
 		expect(result.isSubset).toBe(false);
 		expect(result.errors).toContainEqual(
 			expect.objectContaining({
@@ -195,6 +203,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: { value: "hello" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -217,6 +226,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: { value: "hello" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -249,6 +259,7 @@ describe("constraint validator — runtime validation", () => {
 		// Even with invalid data, no constraint errors because no validators registered
 		const result = checkerNoValidators.check(sub, sup, {
 			data: { id: "not-a-uuid" },
+			validate: true,
 		});
 
 		// Static check passes (same constraints), and no runtime constraint errors
@@ -291,6 +302,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(sub, sup, {
 			data: { id: "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -320,6 +332,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(sub, sup, {
 			data: { id: "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -347,6 +360,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: { user: { id: "not-a-uuid" } },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -375,6 +389,7 @@ describe("constraint validator — runtime validation", () => {
 			data: {
 				ids: ["550e8400-e29b-41d4-a716-446655440000", "not-a-uuid"],
 			},
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -389,6 +404,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: "not-a-uuid",
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -416,6 +432,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(sub, sup, {
 			data: { id: "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -439,6 +456,7 @@ describe("constraint validator — runtime validation", () => {
 		// Data has no "id" property — constraint on id should not be validated
 		const result = checker.check(schema, schema, {
 			data: { name: "test" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(true);
@@ -474,6 +492,7 @@ describe("constraint validator — runtime validation", () => {
 		// Passes IsString but fails IsUuid
 		const result = multiChecker.check(schema, schema, {
 			data: { id: "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -503,6 +522,7 @@ describe("constraint validator — runtime validation", () => {
 					"6ba7b810-9dad-11d1-80b4-00c04fd430c8",
 				],
 			},
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(true);
@@ -521,6 +541,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: { "x-id": "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -541,6 +562,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: { "x-id": "550e8400-e29b-41d4-a716-446655440000" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(true);
@@ -558,6 +580,7 @@ describe("constraint validator — runtime validation", () => {
 		// "name" does not match "^x-" → no constraint validation
 		const result = checker.check(schema, schema, {
 			data: { name: "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(true);
@@ -574,6 +597,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: { name: "Alice", extraField: "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -594,6 +618,7 @@ describe("constraint validator — runtime validation", () => {
 		// "name" is in properties → not validated against additionalProperties
 		const result = checker.check(schema, schema, {
 			data: { name: "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(true);
@@ -608,6 +633,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: { name: "Alice", extra: "550e8400-e29b-41d4-a716-446655440000" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(true);
@@ -628,6 +654,7 @@ describe("constraint validator — runtime validation", () => {
 		// → should NOT be validated against additionalProperties constraints
 		const result = checker.check(schema, schema, {
 			data: { name: "Alice", "x-custom": "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(true);
@@ -652,6 +679,7 @@ describe("constraint validator — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: { foo: "hello", bar: "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(false);
@@ -680,6 +708,7 @@ describe("constraint validator — runtime validation", () => {
 		// "foo" is absent → dependency not triggered → bar constraint not checked
 		const result = checker.check(schema, schema, {
 			data: { bar: "not-a-uuid" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(true);
@@ -701,6 +730,7 @@ describe("constraint validator — runtime validation", () => {
 		// The constraint on "bar" is in properties, and bar is present → validated there.
 		const result = checker.check(schema, schema, {
 			data: { foo: "hello", bar: "550e8400-e29b-41d4-a716-446655440000" },
+			validate: true,
 		});
 
 		expect(result.isSubset).toBe(true);

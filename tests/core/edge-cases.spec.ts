@@ -247,8 +247,8 @@ describe("edge cases", () => {
 		const sub: JSONSchema7 = { type: "string" };
 		const sup: JSONSchema7 = { type: "string" };
 
-		// null is not a valid string — runtime validation should fail
-		const result = checker.check(sub, sup, { data: null });
+		// null is not a valid string — runtime validation should fail (requires validate: true)
+		const result = checker.check(sub, sup, { data: null, validate: true });
 		expect(result.isSubset).toBe(false);
 		expect(result.errors.length).toBeGreaterThan(0);
 
@@ -271,11 +271,11 @@ describe("edge cases", () => {
 		const sub: JSONSchema7 = { type: "number", minimum: 0 };
 		const sup: JSONSchema7 = { type: "number" };
 
-		const r1 = checker.check(sub, sup, { data: 42 });
+		const r1 = checker.check(sub, sup, { data: 42, validate: true });
 		expect(r1.isSubset).toBe(true);
 		expect(r1.errors).toEqual([]);
 
-		const r2 = checker.check(sub, sup, { data: "hello" });
+		const r2 = checker.check(sub, sup, { data: "hello", validate: true });
 		expect(r2.isSubset).toBe(false);
 		expect(r2.errors.length).toBeGreaterThan(0);
 	});

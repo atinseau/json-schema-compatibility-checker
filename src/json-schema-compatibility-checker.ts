@@ -134,17 +134,21 @@ export class JsonSchemaCompatibilityChecker {
 	 * Checks `sub ⊆ sup` and returns a detailed diagnostic
 	 * with human-readable semantic errors.
 	 *
-	 * When `options` is provided with `data`, both schemas go through
-	 * runtime-aware processing before the static check:
+	 * When `options` is provided, both schemas go through runtime-aware
+	 * processing before the static check:
 	 *   1. Conditions (`if/then/else`) are resolved using `data`
+	 *      (if `data` is `undefined`, conditions are resolved with `{}`)
 	 *   2. Schemas are narrowed using runtime values (enum materialization)
-	 *   3. `data` is validated against both resolved schemas via AJV
-	 *   4. If runtime validation fails, `isSubset: false` is returned immediately
-	 *   5. Otherwise the static subset check runs on resolved/narrowed schemas
+	 *   3. The static subset check runs on the resolved/narrowed schemas
+	 *
+	 * When `validate: true` is set in options, two additional runtime steps
+	 * run **after** the static check passes:
+	 *   4. `data` is validated against both resolved schemas via AJV
+	 *   5. Custom constraints are validated against `data`
 	 *
 	 * @param sub - The source schema (subset candidate)
 	 * @param sup - The target schema (expected superset)
-	 * @param options - Runtime options with `data` (optional)
+	 * @param options - Runtime options with `data` and optional `validate` flag
 	 * @returns SubsetResult if no options, ResolvedSubsetResult if options provided
 	 *
 	 * @example
@@ -152,8 +156,11 @@ export class JsonSchemaCompatibilityChecker {
 	 * // Static check (no runtime data)
 	 * checker.check(sub, sup);
 	 *
-	 * // Runtime-aware check
+	 * // Resolve conditions + narrowing + static check (no runtime validation)
 	 * checker.check(sub, sup, { data: { kind: "text", value: "hello" } });
+	 *
+	 * // Full pipeline including AJV + constraint runtime validation
+	 * checker.check(sub, sup, { data: { kind: "text", value: "hello" }, validate: true });
 	 * ```
 	 */
 	check(
@@ -170,34 +177,11 @@ export class JsonSchemaCompatibilityChecker {
 		// ── Runtime-aware path ──
 		if (options) {
 			const data = options.data;
-
-			// If data is explicitly undefined, fall back to the static path.
-			// The runtime path requires concrete data for condition resolution,
-			// narrowing, and validation — undefined data would skip all of these,
-			// producing results identical to the static path.
-			// We still wrap the result in ResolvedSubsetResult to satisfy the
-			// overload contract: callers passing options always get resolved info.
-			if (data === undefined) {
-				const staticResult = this.checkInternal(sub, sup);
-				const noopResolution: ResolvedConditionResult = {
-					resolved: sub as JSONSchema7,
-					branch: null,
-					discriminant: {},
-				};
-				const noopSupResolution: ResolvedConditionResult = {
-					resolved: sup as JSONSchema7,
-					branch: null,
-					discriminant: {},
-				};
-				return {
-					...staticResult,
-					resolvedSub: noopResolution,
-					resolvedSup: noopSupResolution,
-				};
-			}
+			const shouldValidate = options.validate === true;
 
 			// resolveConditions expects Record<string, unknown> for property access;
-			// coerce non-object data to empty object (no conditions to resolve for primitives)
+			// coerce non-object / undefined data to empty object so conditions
+			// are always resolved (v1.0.11 compat: subData: undefined → {})
 			const dataForConditions: Record<string, unknown> = isPlainObj(data)
 				? data
 				: {};
@@ -214,13 +198,13 @@ export class JsonSchemaCompatibilityChecker {
 			);
 
 			// ── Runtime-aware data narrowing ──
-			// Apply narrowing before any equality short-circuit so runtime data
-			// can invalidate or refine enum/const-constrained schemas even when
-			// the resolved schemas are structurally identical.
+			// Apply narrowing only when concrete data is available.
+			// When data is undefined there is nothing to narrow with.
 			// Boolean schemas (true/false) cannot be narrowed — skip narrowing
 			// to avoid passing a non-object to narrowSchemaWithData.
-			const canNarrowSub = isPlainObj(resolvedSub.resolved);
-			const canNarrowSup = isPlainObj(resolvedSup.resolved);
+			const canNarrow = data !== undefined;
+			const canNarrowSub = canNarrow && isPlainObj(resolvedSub.resolved);
+			const canNarrowSup = canNarrow && isPlainObj(resolvedSup.resolved);
 
 			const narrowedSubResolved = canNarrowSub
 				? narrowSchemaWithData(resolvedSub.resolved, data, resolvedSup.resolved)
@@ -230,7 +214,7 @@ export class JsonSchemaCompatibilityChecker {
 				? narrowSchemaWithData(resolvedSup.resolved, data, resolvedSub.resolved)
 				: resolvedSup.resolved;
 
-			// ── Static subset check (runs first) ──
+			// ── Static subset check ──
 			// Structural incompatibilities are schema-level problems — they are
 			// permanent regardless of the concrete data. Run this before runtime
 			// validation so that static errors always surface with higher priority.
@@ -247,61 +231,63 @@ export class JsonSchemaCompatibilityChecker {
 				};
 			}
 
-			// ── Runtime validation ──
-			// The schemas are structurally compatible. Now validate the concrete
-			// data against both resolved/narrowed schemas to catch data-level
-			// violations (e.g. value doesn't match format, out-of-range, etc.).
-			const runtimeErrors: SchemaError[] = [];
+			// ── Runtime validation (opt-in) ──
+			// Only runs when `validate: true` is explicitly set.
+			// Validates the concrete data against both resolved/narrowed schemas
+			// via AJV, then runs custom constraint validators if registered.
+			if (shouldValidate && data !== undefined) {
+				const runtimeErrors: SchemaError[] = [];
 
-			runtimeErrors.push(
-				...this.prefixRuntimeErrors(
-					getRuntimeValidationErrors(narrowedSubResolved, data),
-					"$sub",
-				),
-			);
-
-			runtimeErrors.push(
-				...this.prefixRuntimeErrors(
-					getRuntimeValidationErrors(narrowedSupResolved, data),
-					"$sup",
-				),
-			);
-
-			// ── Constraint validation ──
-			// Validate runtime data against custom constraints in both schemas.
-			// Only runs if constraint validators were registered in the constructor.
-			if (Object.keys(this.constraintValidators).length > 0) {
 				runtimeErrors.push(
 					...this.prefixRuntimeErrors(
-						validateSchemaConstraints(
-							narrowedSubResolved,
-							data,
-							this.constraintValidators,
-						),
+						getRuntimeValidationErrors(narrowedSubResolved, data),
 						"$sub",
 					),
 				);
 
 				runtimeErrors.push(
 					...this.prefixRuntimeErrors(
-						validateSchemaConstraints(
-							narrowedSupResolved,
-							data,
-							this.constraintValidators,
-						),
+						getRuntimeValidationErrors(narrowedSupResolved, data),
 						"$sup",
 					),
 				);
-			}
 
-			if (runtimeErrors.length > 0) {
-				return {
-					isSubset: false,
-					merged: null,
-					errors: runtimeErrors,
-					resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
-					resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
-				};
+				// ── Constraint validation ──
+				// Validate runtime data against custom constraints in both schemas.
+				// Only runs if constraint validators were registered in the constructor.
+				if (Object.keys(this.constraintValidators).length > 0) {
+					runtimeErrors.push(
+						...this.prefixRuntimeErrors(
+							validateSchemaConstraints(
+								narrowedSubResolved,
+								data,
+								this.constraintValidators,
+							),
+							"$sub",
+						),
+					);
+
+					runtimeErrors.push(
+						...this.prefixRuntimeErrors(
+							validateSchemaConstraints(
+								narrowedSupResolved,
+								data,
+								this.constraintValidators,
+							),
+							"$sup",
+						),
+					);
+				}
+
+				if (runtimeErrors.length > 0) {
+					return {
+						isSubset: false,
+						merged: null,
+						errors: runtimeErrors,
+						resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
+						resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
+					};
+				}
 			}
 
 			return {

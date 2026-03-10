@@ -106,7 +106,7 @@ describe("data narrowing — primitives", () => {
 	});
 });
 
-describe("data narrowing — runtime validation", () => {
+describe("data narrowing — runtime validation (validate: true)", () => {
 	test("string + enum with invalid runtime value → validates runtime data with AJV", () => {
 		const schema: JSONSchema7 = {
 			type: "string",
@@ -115,6 +115,7 @@ describe("data narrowing — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: "yellow",
+			validate: true,
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -129,6 +130,7 @@ describe("data narrowing — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: "not-an-email",
+			validate: true,
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -146,6 +148,7 @@ describe("data narrowing — runtime validation", () => {
 			{ type: "string" },
 			{
 				data: "a",
+				validate: true,
 			},
 		) as ResolvedSubsetResult;
 
@@ -168,6 +171,7 @@ describe("data narrowing — runtime validation", () => {
 
 		const result = checker.check(schema, schema, {
 			data: "Je ne suis pas une couleur",
+			validate: true,
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -187,6 +191,22 @@ describe("data narrowing — runtime validation", () => {
 		]);
 		expect(result.resolvedSub.resolved).toEqual(schema);
 		expect(result.resolvedSup.resolved).toEqual(schema);
+	});
+
+	test("without validate flag, invalid runtime data does NOT trigger AJV errors", () => {
+		const schema: JSONSchema7 = {
+			type: "string",
+			enum: ["red", "green", "blue"],
+		};
+
+		// Same schemas → structurally identical → static check passes.
+		// Without validate: true, AJV does not run, so invalid data is ignored.
+		const result = checker.check(schema, schema, {
+			data: "yellow",
+		}) as ResolvedSubsetResult;
+
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toEqual([]);
 	});
 });
 
