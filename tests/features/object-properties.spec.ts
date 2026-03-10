@@ -143,11 +143,11 @@ describe("Point 8 — minProperties / maxProperties", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Amélioration 3 — additionalProperties : interaction sûre avec le merge
+//  Enhancement 3 — additionalProperties: safe interaction with the merge
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Amélioration 3 — additionalProperties conflict detection", () => {
-	test("Test C — additionalProperties: false bloquant (isSubset A ⊆ B)", () => {
+describe("Enhancement 3 — additionalProperties conflict detection", () => {
+	test("Test C — additionalProperties: false blocking (isSubset A ⊆ B)", () => {
 		const schemaA: JSONSchema7 = {
 			type: "object",
 			properties: { name: { type: "string" } },
@@ -160,7 +160,7 @@ describe("Amélioration 3 — additionalProperties conflict detection", () => {
 				age: { type: "number" },
 			},
 		};
-		// A est plus restrictif que B → A ⊆ B
+		// A is more restrictive than B → A ⊆ B
 		expect(checker.isSubset(schemaA, schemaB)).toBe(true);
 	});
 
@@ -177,7 +177,7 @@ describe("Amélioration 3 — additionalProperties conflict detection", () => {
 				age: { type: "number" },
 			},
 		};
-		// B accepte age, A l'interdit → B ⊄ A
+		// B accepts age, A forbids it → B ⊄ A
 		expect(checker.isSubset(schemaB, schemaA)).toBe(false);
 	});
 
@@ -196,12 +196,12 @@ describe("Amélioration 3 — additionalProperties conflict detection", () => {
 			},
 			required: ["name", "age"],
 		};
-		// a interdit age, b exige age → intersection vide
+		// a forbids age, b requires age → empty intersection
 		const result = checker.intersect(a, b);
 		expect(result).toBeNull();
 	});
 
-	test("additionalProperties: { type: string } vs propriété extra required de type number → conflit", () => {
+	test("additionalProperties: { type: string } vs extra required property of type number → conflict", () => {
 		const a: JSONSchema7 = {
 			type: "object",
 			properties: { name: { type: "string" } },
@@ -215,12 +215,12 @@ describe("Amélioration 3 — additionalProperties conflict detection", () => {
 			},
 			required: ["name", "age"],
 		};
-		// age (number) tombe sous additionalProperties: { type: string } → conflit de type
+		// age (number) falls under additionalProperties: { type: string } → type conflict
 		const result = checker.intersect(a, b);
 		expect(result).toBeNull();
 	});
 
-	test("additionalProperties: { type: string } vs propriété extra de même type → pas de conflit", () => {
+	test("additionalProperties: { type: string } vs extra property of same type → no conflict", () => {
 		const a: JSONSchema7 = {
 			type: "object",
 			properties: { name: { type: "string" } },
@@ -234,12 +234,12 @@ describe("Amélioration 3 — additionalProperties conflict detection", () => {
 			},
 			required: ["name", "bio"],
 		};
-		// bio (string) est compatible avec additionalProperties: { type: string } → pas de conflit
+		// bio (string) is compatible with additionalProperties: { type: string } → no conflict
 		const result = checker.intersect(a, b);
 		expect(result).not.toBeNull();
 	});
 
-	test("récursion : conflit additionalProperties dans sous-objets", () => {
+	test("recursion: additionalProperties conflict in sub-objects", () => {
 		const a: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -263,12 +263,12 @@ describe("Amélioration 3 — additionalProperties conflict detection", () => {
 				},
 			},
 		};
-		// nested dans a interdit y, nested dans b exige y → conflit récursif
+		// nested in a forbids y, nested in b requires y → recursive conflict
 		const result = checker.intersect(a, b);
 		expect(result).toBeNull();
 	});
 
-	test("les deux ont additionalProperties: false sans conflit required → pas de conflit", () => {
+	test("both have additionalProperties: false without required conflict → no conflict", () => {
 		const a: JSONSchema7 = {
 			type: "object",
 			properties: { name: { type: "string" } },
@@ -279,7 +279,7 @@ describe("Amélioration 3 — additionalProperties conflict detection", () => {
 			properties: { name: { type: "string" } },
 			additionalProperties: false,
 		};
-		// Mêmes properties, pas de conflit
+		// Same properties, no conflict
 		const result = checker.intersect(a, b);
 		expect(result).not.toBeNull();
 	});

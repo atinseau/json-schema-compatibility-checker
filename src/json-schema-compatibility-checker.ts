@@ -1,5 +1,6 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 import { resolveConditions } from "./condition-resolver.ts";
+import { validateSchemaConstraints } from "./constraint-validator.ts";
 import { narrowSchemaWithData } from "./data-narrowing.ts";
 import { formatResult } from "./formatter.ts";
 import { MergeEngine } from "./merge-engine.ts";
@@ -9,6 +10,10 @@ import {
 	isPatternSubset,
 	isTrivialPattern,
 } from "./pattern-subset.ts";
+import {
+	clearAllValidatorCaches,
+	getRuntimeValidationErrors,
+} from "./runtime-validator.ts";
 import type { BranchResult, BranchType } from "./subset-checker.ts";
 import {
 	checkAtomic,
@@ -18,7 +23,9 @@ import {
 	isAtomicSubsetOf,
 } from "./subset-checker.ts";
 import type {
-	CheckConditionsOptions,
+	CheckerOptions,
+	CheckRuntimeOptions,
+	ConstraintValidatorRegistry,
 	ResolvedConditionResult,
 	ResolvedSubsetResult,
 	SchemaError,
@@ -33,7 +40,7 @@ export type {
 	SubsetResult,
 	ResolvedConditionResult,
 	ResolvedSubsetResult,
-	CheckConditionsOptions,
+	CheckRuntimeOptions,
 	BranchType,
 	BranchResult,
 };
@@ -50,40 +57,42 @@ export {
 
 // ─── Main Class ──────────────────────────────────────────────────────────────
 //
-// Façade légère qui orchestre les sous-modules pour vérifier la compatibilité
-// entre JSON Schemas (Draft-07).
+// Lightweight facade that orchestrates sub-modules to verify compatibility
+// between JSON Schemas (Draft-07).
 //
-// Principe mathématique :
+// Mathematical principle:
 //   A ⊆ B  ⟺  A ∩ B ≡ A
 //
-// En JSON Schema :
-//   - A ∩ B  =  allOf([A, B])  résolu via merge
-//   - ≡      =  comparaison structurelle
+// In JSON Schema terms:
+//   - A ∩ B  =  allOf([A, B])  resolved via merge
+//   - ≡      =  structural comparison
 //
 // @example
 // ```ts
 // const checker = new JsonSchemaCompatibilityChecker();
 //
-// checker.isSubset(strict, loose);             // true
-// checker.check(loose, strict);                // { isSubset: false, diffs: [...] }
-// checker.check(sub, sup, { subData: {...} }); // resolves conditions then checks
+// checker.isSubset(strict, loose);          // true
+// checker.check(loose, strict);             // { isSubset: false, diffs: [...] }
+// checker.check(sub, sup, { data: {...} }); // resolves conditions then checks
 // ```
 
 export class JsonSchemaCompatibilityChecker {
+	private readonly constraintValidators: ConstraintValidatorRegistry;
 	private readonly engine: MergeEngine;
 
-	constructor() {
+	constructor(options?: CheckerOptions) {
 		this.engine = new MergeEngine();
+		this.constraintValidators = options?.constraints ?? {};
 	}
 
 	// ── Subset check (boolean) ─────────────────────────────────────────────
 
 	/**
-	 * Vérifie si `sub ⊆ sup`.
-	 * Toute valeur valide pour sub est-elle aussi valide pour sup ?
+	 * Checks whether `sub ⊆ sup`.
+	 * Is every value valid for sub also valid for sup?
 	 *
-	 * Point 6 — Utilise `getBranchesTyped` pour distinguer `anyOf` de `oneOf`
-	 * en interne, bien que le résultat boolean ne reflète pas la distinction.
+	 * Uses `getBranchesTyped` to distinguish `anyOf` from `oneOf`
+	 * internally, although the boolean result does not reflect the distinction.
 	 */
 	isSubset(sub: JSONSchema7Definition, sup: JSONSchema7Definition): boolean {
 		// ── Identity short-circuit ──
@@ -122,95 +131,181 @@ export class JsonSchemaCompatibilityChecker {
 	// ── Subset check (detailed) ────────────────────────────────────────────
 
 	/**
-	 * Vérifie `sub ⊆ sup` et retourne un diagnostic complet
-	 * avec des erreurs sémantiques lisibles.
+	 * Checks `sub ⊆ sup` and returns a detailed diagnostic
+	 * with human-readable semantic errors.
 	 *
-	 * Si `options` est fourni avec `subData`, les conditions `if/then/else`
-	 * des deux schemas sont résolues avant le check :
-	 * - `subData` est utilisé pour résoudre les conditions du sub
-	 * - `supData` (ou `subData` par défaut) est utilisé pour résoudre le sup
+	 * When `options` is provided with `data`, both schemas go through
+	 * runtime-aware processing before the static check:
+	 *   1. Conditions (`if/then/else`) are resolved using `data`
+	 *   2. Schemas are narrowed using runtime values (enum materialization)
+	 *   3. `data` is validated against both resolved schemas via AJV
+	 *   4. If runtime validation fails, `isSubset: false` is returned immediately
+	 *   5. Otherwise the static subset check runs on resolved/narrowed schemas
 	 *
-	 * @param sub - Le schema source (candidat subset)
-	 * @param sup - Le schema cible (superset attendu)
-	 * @param options - Options de résolution de conditions (optionnel)
-	 * @returns SubsetResult si pas d'options, ResolvedSubsetResult si options fournies
+	 * @param sub - The source schema (subset candidate)
+	 * @param sup - The target schema (expected superset)
+	 * @param options - Runtime options with `data` (optional)
+	 * @returns SubsetResult if no options, ResolvedSubsetResult if options provided
 	 *
 	 * @example
 	 * ```ts
-	 * // Sans résolution de conditions
+	 * // Static check (no runtime data)
 	 * checker.check(sub, sup);
 	 *
-	 * // Avec résolution de conditions (subData pour les deux)
-	 * checker.check(sub, sup, { subData: { kind: "text" } });
-	 *
-	 * // Avec résolution séparée pour sub et sup
-	 * checker.check(sub, sup, { subData: { kind: "text" }, supData: { kind: "other" } });
+	 * // Runtime-aware check
+	 * checker.check(sub, sup, { data: { kind: "text", value: "hello" } });
 	 * ```
 	 */
 	check(
 		sub: JSONSchema7Definition,
 		sup: JSONSchema7Definition,
-		options: CheckConditionsOptions,
+		options: CheckRuntimeOptions,
 	): ResolvedSubsetResult;
 	check(sub: JSONSchema7Definition, sup: JSONSchema7Definition): SubsetResult;
 	check(
 		sub: JSONSchema7Definition,
 		sup: JSONSchema7Definition,
-		options?: CheckConditionsOptions,
+		options?: CheckRuntimeOptions,
 	): SubsetResult | ResolvedSubsetResult {
-		// ── Condition resolution path ──
+		// ── Runtime-aware path ──
 		if (options) {
-			const subData = options.subData;
-			const supData = options.supData ?? options.subData;
+			const data = options.data;
+
+			// If data is explicitly undefined, fall back to the static path.
+			// The runtime path requires concrete data for condition resolution,
+			// narrowing, and validation — undefined data would skip all of these,
+			// producing results identical to the static path.
+			// We still wrap the result in ResolvedSubsetResult to satisfy the
+			// overload contract: callers passing options always get resolved info.
+			if (data === undefined) {
+				const staticResult = this.checkInternal(sub, sup);
+				const noopResolution: ResolvedConditionResult = {
+					resolved: sub as JSONSchema7,
+					branch: null,
+					discriminant: {},
+				};
+				const noopSupResolution: ResolvedConditionResult = {
+					resolved: sup as JSONSchema7,
+					branch: null,
+					discriminant: {},
+				};
+				return {
+					...staticResult,
+					resolvedSub: noopResolution,
+					resolvedSup: noopSupResolution,
+				};
+			}
 
 			// resolveConditions expects Record<string, unknown> for property access;
 			// coerce non-object data to empty object (no conditions to resolve for primitives)
-			const subDataForConditions = isPlainObj(subData)
-				? subData
-				: ({} as Record<string, unknown>);
-			const supDataForConditions = isPlainObj(supData)
-				? supData
-				: ({} as Record<string, unknown>);
+			const dataForConditions: Record<string, unknown> = isPlainObj(data)
+				? data
+				: {};
 
 			const resolvedSub = resolveConditions(
 				sub as JSONSchema7,
-				subDataForConditions,
+				dataForConditions,
 				this.engine,
 			);
 			const resolvedSup = resolveConditions(
 				sup as JSONSchema7,
-				supDataForConditions,
+				dataForConditions,
 				this.engine,
 			);
 
-			// ── Data narrowing ──
-			// When runtime data is available, narrow the resolved schema by
-			// constraining generic types to enum values when the data matches
-			// the opposite schema's enum constraints.
-			const narrowedSubResolved =
-				subData !== undefined
-					? narrowSchemaWithData(
-							resolvedSub.resolved,
-							subData,
-							resolvedSup.resolved,
-						)
-					: resolvedSub.resolved;
+			// ── Runtime-aware data narrowing ──
+			// Apply narrowing before any equality short-circuit so runtime data
+			// can invalidate or refine enum/const-constrained schemas even when
+			// the resolved schemas are structurally identical.
+			// Boolean schemas (true/false) cannot be narrowed — skip narrowing
+			// to avoid passing a non-object to narrowSchemaWithData.
+			const canNarrowSub = isPlainObj(resolvedSub.resolved);
+			const canNarrowSup = isPlainObj(resolvedSup.resolved);
 
-			const narrowedSupResolved =
-				supData !== undefined
-					? narrowSchemaWithData(
-							resolvedSup.resolved,
-							supData,
-							resolvedSub.resolved,
-						)
-					: resolvedSup.resolved;
+			const narrowedSubResolved = canNarrowSub
+				? narrowSchemaWithData(resolvedSub.resolved, data, resolvedSup.resolved)
+				: resolvedSub.resolved;
 
-			const result = this.checkInternal(
+			const narrowedSupResolved = canNarrowSup
+				? narrowSchemaWithData(resolvedSup.resolved, data, resolvedSub.resolved)
+				: resolvedSup.resolved;
+
+			// ── Static subset check (runs first) ──
+			// Structural incompatibilities are schema-level problems — they are
+			// permanent regardless of the concrete data. Run this before runtime
+			// validation so that static errors always surface with higher priority.
+			const staticResult = this.checkInternal(
 				narrowedSubResolved,
 				narrowedSupResolved,
 			);
+
+			if (!staticResult.isSubset) {
+				return {
+					...staticResult,
+					resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
+					resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
+				};
+			}
+
+			// ── Runtime validation ──
+			// The schemas are structurally compatible. Now validate the concrete
+			// data against both resolved/narrowed schemas to catch data-level
+			// violations (e.g. value doesn't match format, out-of-range, etc.).
+			const runtimeErrors: SchemaError[] = [];
+
+			runtimeErrors.push(
+				...this.prefixRuntimeErrors(
+					getRuntimeValidationErrors(narrowedSubResolved, data),
+					"$sub",
+				),
+			);
+
+			runtimeErrors.push(
+				...this.prefixRuntimeErrors(
+					getRuntimeValidationErrors(narrowedSupResolved, data),
+					"$sup",
+				),
+			);
+
+			// ── Constraint validation ──
+			// Validate runtime data against custom constraints in both schemas.
+			// Only runs if constraint validators were registered in the constructor.
+			if (Object.keys(this.constraintValidators).length > 0) {
+				runtimeErrors.push(
+					...this.prefixRuntimeErrors(
+						validateSchemaConstraints(
+							narrowedSubResolved,
+							data,
+							this.constraintValidators,
+						),
+						"$sub",
+					),
+				);
+
+				runtimeErrors.push(
+					...this.prefixRuntimeErrors(
+						validateSchemaConstraints(
+							narrowedSupResolved,
+							data,
+							this.constraintValidators,
+						),
+						"$sup",
+					),
+				);
+			}
+
+			if (runtimeErrors.length > 0) {
+				return {
+					isSubset: false,
+					merged: null,
+					errors: runtimeErrors,
+					resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
+					resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
+				};
+			}
+
 			return {
-				...result,
+				...staticResult,
 				resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
 				resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
 			};
@@ -223,7 +318,7 @@ export class JsonSchemaCompatibilityChecker {
 	// ── Equality ───────────────────────────────────────────────────────────
 
 	/**
-	 * Vérifie l'égalité structurelle entre deux schemas.
+	 * Checks structural equality between two schemas.
 	 */
 	isEqual(a: JSONSchema7Definition, b: JSONSchema7Definition): boolean {
 		return this.engine.isEqual(normalize(a), normalize(b));
@@ -232,11 +327,11 @@ export class JsonSchemaCompatibilityChecker {
 	// ── Intersection ───────────────────────────────────────────────────────
 
 	/**
-	 * Calcule l'intersection de deux schemas (allOf merge).
-	 * Retourne null si les schemas sont incompatibles.
+	 * Computes the intersection of two schemas (allOf merge).
+	 * Returns null if the schemas are incompatible.
 	 *
-	 * Le résultat est normalisé pour éliminer les artefacts structurels
-	 * du merge (ex: `enum` redondant quand `const` est présent).
+	 * The result is normalized to eliminate structural artifacts
+	 * from the merge (e.g. redundant `enum` when `const` is present).
 	 */
 	intersect(
 		a: JSONSchema7Definition,
@@ -264,8 +359,8 @@ export class JsonSchemaCompatibilityChecker {
 	// ── Normalization ──────────────────────────────────────────────────────
 
 	/**
-	 * Normalise un schema : infère `type` depuis `const`/`enum`,
-	 * et normalise récursivement tous les sous-schemas.
+	 * Normalizes a schema: infers `type` from `const`/`enum`,
+	 * and recursively normalizes all sub-schemas.
 	 */
 	normalize(def: JSONSchema7Definition): JSONSchema7Definition {
 		return normalize(def);
@@ -274,7 +369,7 @@ export class JsonSchemaCompatibilityChecker {
 	// ── Formatting ─────────────────────────────────────────────────────────
 
 	/**
-	 * Formate un SubsetResult en chaîne lisible (utile pour logs/debug).
+	 * Formats a SubsetResult into a readable string (useful for logs/debug).
 	 */
 	formatResult(label: string, result: SubsetResult): string {
 		return formatResult(label, result);
@@ -284,7 +379,7 @@ export class JsonSchemaCompatibilityChecker {
 
 	/**
 	 * Resolves `if/then/else` conditions in a schema by evaluating the `if`
-	 * against partial data (discriminants).
+	 * against runtime data.
 	 *
 	 * @param schema - The schema containing conditions to resolve
 	 * @param data - The runtime data used to evaluate conditions
@@ -299,10 +394,20 @@ export class JsonSchemaCompatibilityChecker {
 
 	// ── Private ────────────────────────────────────────────────────────────
 
+	private prefixRuntimeErrors(
+		errors: SchemaError[],
+		rootKey: "$sub" | "$sup",
+	): SchemaError[] {
+		return errors.map((error) => ({
+			...error,
+			key: error.key === "$root" ? rootKey : `${rootKey}.${error.key}`,
+		}));
+	}
+
 	/**
-	 * Logique interne de check sans résolution de conditions.
-	 * Factorise le pipeline normalize → branch → atomic pour éviter
-	 * la duplication entre les deux chemins de `check()`.
+	 * Internal check logic without condition resolution.
+	 * Factorizes the normalize → branch → atomic pipeline to avoid
+	 * duplication between the two paths of `check()`.
 	 */
 	private checkInternal(
 		sub: JSONSchema7Definition,
@@ -334,17 +439,42 @@ export class JsonSchemaCompatibilityChecker {
 		const { branches: supBranches, type: supBranchType } =
 			getBranchesTyped(nSup);
 
-		// anyOf/oneOf dans sub
+		// anyOf/oneOf in sub
 		if (subBranches.length > 1 || subBranches[0] !== nSub) {
 			return checkBranchedSub(subBranches, nSup, this.engine, subBranchType);
 		}
 
-		// anyOf/oneOf dans sup uniquement
+		// anyOf/oneOf in sup only
 		if (supBranches.length > 1 || supBranches[0] !== nSup) {
 			return checkBranchedSup(nSub, supBranches, this.engine, supBranchType);
 		}
 
-		// Cas standard
+		// Standard case
 		return checkAtomic(nSub, nSup, this.engine);
+	}
+
+	// ── Cache management ───────────────────────────────────────────────────
+
+	/**
+	 * Clears all compiled AJV validator caches (WeakMap, LRU, and AJV internal).
+	 *
+	 * Useful for:
+	 * - Long-running processes where schemas evolve over time
+	 * - Test isolation (ensuring no cross-test cache pollution)
+	 * - Memory pressure situations where cached validators are no longer needed
+	 *
+	 * After calling this, the next validation call will recompile validators
+	 * from scratch — there is a one-time performance cost per unique schema.
+	 *
+	 * This is a static method because the AJV instance is a module-level
+	 * singleton shared across all `JsonSchemaCompatibilityChecker` instances.
+	 *
+	 * @example
+	 * ```ts
+	 * JsonSchemaCompatibilityChecker.clearCache();
+	 * ```
+	 */
+	static clearCache(): void {
+		clearAllValidatorCaches();
 	}
 }

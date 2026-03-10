@@ -215,7 +215,7 @@ checker.isSubset(businessOutput, formSchema); // false ❌
 
 // Avec résolution, le schéma conditionnel est aplati
 const result = checker.check(businessOutput, formSchema, {
-  subData: { accountType: "business" },
+  data: { accountType: "business" },
 });
 console.log(result.isSubset);          // true ✅
 console.log(result.resolvedSup.branch); // "then"
@@ -234,7 +234,7 @@ const personalOutput = {
 };
 
 const personalResult = checker.check(personalOutput, formSchema, {
-  subData: { accountType: "personal" },
+  data: { accountType: "personal" },
 });
 console.log(personalResult.isSubset);          // true ✅
 console.log(personalResult.resolvedSup.branch); // "else"

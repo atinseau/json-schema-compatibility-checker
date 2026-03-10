@@ -20,20 +20,20 @@ describe("data narrowing — primitives", () => {
 	test("string value in enum → narrows sub to enum, isSubset = true", () => {
 		const sub: JSONSchema7 = { type: "string" };
 		const result = checker.check(sub, sup, {
-			subData: "red",
+			data: "red",
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSub.resolved).toEqual({
 			type: "string",
-			enum: ["red"],
+			const: "red",
 		});
 	});
 
 	test("string value NOT in enum → no narrowing, isSubset = false", () => {
 		const sub: JSONSchema7 = { type: "string" };
 		const result = checker.check(sub, sup, {
-			subData: "yellow",
+			data: "yellow",
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -44,13 +44,13 @@ describe("data narrowing — primitives", () => {
 		const numSup: JSONSchema7 = { type: "integer", enum: [1, 2, 3] };
 		const numSub: JSONSchema7 = { type: "integer" };
 		const result = checker.check(numSub, numSup, {
-			subData: 2,
+			data: 2,
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSub.resolved).toEqual({
 			type: "integer",
-			enum: [2],
+			const: 2,
 		});
 	});
 
@@ -58,7 +58,7 @@ describe("data narrowing — primitives", () => {
 		const numSup: JSONSchema7 = { type: "integer", enum: [1, 2, 3] };
 		const numSub: JSONSchema7 = { type: "integer" };
 		const result = checker.check(numSub, numSup, {
-			subData: 99,
+			data: 99,
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -69,7 +69,7 @@ describe("data narrowing — primitives", () => {
 		const boolSup: JSONSchema7 = { type: "boolean", enum: [true] };
 		const boolSub: JSONSchema7 = { type: "boolean" };
 		const result = checker.check(boolSub, boolSup, {
-			subData: true,
+			data: true,
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(true);
@@ -79,7 +79,7 @@ describe("data narrowing — primitives", () => {
 		const boolSup: JSONSchema7 = { type: "boolean", enum: [true] };
 		const boolSub: JSONSchema7 = { type: "boolean" };
 		const result = checker.check(boolSub, boolSup, {
-			subData: false,
+			data: false,
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -89,7 +89,7 @@ describe("data narrowing — primitives", () => {
 		const constSup: JSONSchema7 = { type: "string", const: "fixed" };
 		const sub: JSONSchema7 = { type: "string" };
 		const result = checker.check(sub, constSup, {
-			subData: "fixed",
+			data: "fixed",
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(true);
@@ -99,10 +99,94 @@ describe("data narrowing — primitives", () => {
 		const constSup: JSONSchema7 = { type: "string", const: "fixed" };
 		const sub: JSONSchema7 = { type: "string" };
 		const result = checker.check(sub, constSup, {
-			subData: "other",
+			data: "other",
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
+	});
+});
+
+describe("data narrowing — runtime validation", () => {
+	test("string + enum with invalid runtime value → validates runtime data with AJV", () => {
+		const schema: JSONSchema7 = {
+			type: "string",
+			enum: ["red", "green", "blue"],
+		};
+
+		const result = checker.check(schema, schema, {
+			data: "yellow",
+		}) as ResolvedSubsetResult;
+
+		expect(result.isSubset).toBe(false);
+		expect(result.resolvedSub.resolved).toEqual(schema);
+	});
+
+	test("string + format with invalid runtime value → validates runtime data with AJV", () => {
+		const schema: JSONSchema7 = {
+			type: "string",
+			format: "email",
+		};
+
+		const result = checker.check(schema, schema, {
+			data: "not-an-email",
+		}) as ResolvedSubsetResult;
+
+		expect(result.isSubset).toBe(false);
+		expect(result.resolvedSub.resolved).toEqual(schema);
+	});
+
+	test("string + minLength with invalid runtime value → reports minLength runtime error", () => {
+		const schema: JSONSchema7 = {
+			type: "string",
+			minLength: 5,
+		};
+
+		const result = checker.check(
+			schema,
+			{ type: "string" },
+			{
+				data: "a",
+			},
+		) as ResolvedSubsetResult;
+
+		expect(result.isSubset).toBe(false);
+		expect(result.errors).toEqual([
+			{
+				key: "$sub",
+				expected: "minLength: 5",
+				received: "a",
+			},
+		]);
+		expect(result.resolvedSub.resolved).toEqual(schema);
+	});
+
+	test("string + enum with invalid runtime value → reports enum error at root", () => {
+		const schema: JSONSchema7 = {
+			type: "string",
+			enum: ["red", "green", "blue"],
+		};
+
+		const result = checker.check(schema, schema, {
+			data: "Je ne suis pas une couleur",
+		}) as ResolvedSubsetResult;
+
+		expect(result.isSubset).toBe(false);
+		// Runtime validation runs against both resolved sub and sup.
+		// Since both are the same schema, both produce an error.
+		expect(result.errors).toEqual([
+			{
+				key: "$sub",
+				expected: "red, green, or blue",
+				received: "Je ne suis pas une couleur",
+			},
+			{
+				key: "$sup",
+				expected: "red, green, or blue",
+				received: "Je ne suis pas une couleur",
+			},
+		]);
+		expect(result.resolvedSub.resolved).toEqual(schema);
+		expect(result.resolvedSup.resolved).toEqual(schema);
 	});
 });
 
@@ -113,7 +197,7 @@ describe("data narrowing — no-op cases", () => {
 		const sub: JSONSchema7 = { type: "string" };
 		const sup: JSONSchema7 = { type: "string", minLength: 1 };
 		const result = checker.check(sub, sup, {
-			subData: "hello",
+			data: "hello",
 		}) as ResolvedSubsetResult;
 
 		// string is not a subset of string+minLength regardless of data
@@ -127,7 +211,7 @@ describe("data narrowing — no-op cases", () => {
 			enum: ["red", "green", "blue"],
 		};
 		const result = checker.check(sub, sup, {
-			subData: "red",
+			data: "red",
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -145,7 +229,7 @@ describe("data narrowing — no-op cases", () => {
 			enum: ["red", "green", "blue"],
 		};
 		const result = checker.check(sub, sup, {
-			subData: "red",
+			data: "red",
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -155,38 +239,49 @@ describe("data narrowing — no-op cases", () => {
 		const sub: JSONSchema7 = { type: "string" };
 		const sup: JSONSchema7 = { type: "number" };
 		const result = checker.check(sub, sup, {
-			subData: "hello",
+			data: "hello",
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
 	});
 
-	test("subData is null → no narrowing", () => {
+	test("data is null → no narrowing", () => {
 		const sub: JSONSchema7 = { type: "string" };
 		const sup: JSONSchema7 = {
 			type: "string",
 			enum: ["red", "green", "blue"],
 		};
 		const result = checker.check(sub, sup, {
-			subData: null,
+			data: null,
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
 		expect(result.resolvedSub.resolved).toEqual({ type: "string" });
 	});
 
-	test("subData is undefined → no narrowing", () => {
+	test("data is undefined → no narrowing", () => {
 		const sub: JSONSchema7 = { type: "string" };
 		const sup: JSONSchema7 = {
 			type: "string",
 			enum: ["red", "green", "blue"],
 		};
-		const result = checker.check(sub, sup, {
-			subData: undefined,
-		}) as ResolvedSubsetResult;
 
-		expect(result.isSubset).toBe(false);
-		expect(result.resolvedSub.resolved).toEqual({ type: "string" });
+		// With data: undefined, the runtime path falls back to the static path.
+		// The overload still returns ResolvedSubsetResult for type-safety,
+		// but resolvedSub/resolvedSup reflect no-op resolution (branch: null).
+		const staticResult = checker.check(sub, sup);
+		const undefinedDataResult = checker.check(sub, sup, {
+			data: undefined,
+		});
+
+		expect(undefinedDataResult.isSubset).toBe(false);
+		expect(undefinedDataResult.isSubset).toBe(staticResult.isSubset);
+		// resolvedSub/resolvedSup are present (overload contract) but reflect no resolution
+		expect("resolvedSub" in undefinedDataResult).toBe(true);
+		expect(undefinedDataResult.resolvedSub.branch).toBeNull();
+		expect(undefinedDataResult.resolvedSup.branch).toBeNull();
+		expect(undefinedDataResult.resolvedSub.resolved).toEqual(sub);
+		expect(undefinedDataResult.resolvedSup.resolved).toEqual(sup);
 	});
 });
 
@@ -212,14 +307,14 @@ describe("data narrowing — object properties", () => {
 			required: ["color", "size"],
 		};
 		const result = checker.check(sub, sup, {
-			subData: { color: "red", size: 42 },
+			data: { color: "red", size: 42 },
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(true);
 		expect(
 			(result.resolvedSub.resolved.properties as Record<string, JSONSchema7>)
 				.color,
-		).toEqual({ type: "string", enum: ["red"] });
+		).toEqual({ type: "string", const: "red" });
 	});
 
 	test("object with property value NOT in enum → no narrowing, isSubset = false", () => {
@@ -232,7 +327,7 @@ describe("data narrowing — object properties", () => {
 			required: ["color", "size"],
 		};
 		const result = checker.check(sub, sup, {
-			subData: { color: "yellow", size: 42 },
+			data: { color: "yellow", size: 42 },
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -260,7 +355,7 @@ describe("data narrowing — object properties", () => {
 			required: ["color", "shape"],
 		};
 		const result = checker.check(sub, multiEnumSup, {
-			subData: { color: "red", shape: "circle" },
+			data: { color: "red", shape: "circle" },
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(true);
@@ -268,10 +363,10 @@ describe("data narrowing — object properties", () => {
 			string,
 			JSONSchema7
 		>;
-		expect(resolvedProps.color).toEqual({ type: "string", enum: ["red"] });
+		expect(resolvedProps.color).toEqual({ type: "string", const: "red" });
 		expect(resolvedProps.shape).toEqual({
 			type: "string",
-			enum: ["circle"],
+			const: "circle",
 		});
 	});
 
@@ -293,7 +388,7 @@ describe("data narrowing — object properties", () => {
 			required: ["color", "shape"],
 		};
 		const result = checker.check(sub, multiEnumSup, {
-			subData: { color: "red", shape: "triangle" },
+			data: { color: "red", shape: "triangle" },
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -302,7 +397,7 @@ describe("data narrowing — object properties", () => {
 			JSONSchema7
 		>;
 		// color was narrowed because "red" is in the enum
-		expect(resolvedProps.color).toEqual({ type: "string", enum: ["red"] });
+		expect(resolvedProps.color).toEqual({ type: "string", const: "red" });
 		// shape was NOT narrowed because "triangle" is not in the enum
 		expect(resolvedProps.shape).toEqual({ type: "string" });
 	});
@@ -317,7 +412,7 @@ describe("data narrowing — object properties", () => {
 			required: ["color", "size"],
 		};
 		const result = checker.check(sub, sup, {
-			subData: { size: 42 },
+			data: { size: 42 },
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -335,7 +430,7 @@ describe("data narrowing — object properties", () => {
 			},
 		};
 		const result = checker.check(sub, sup, {
-			subData: "not-an-object",
+			data: "not-an-object",
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -344,7 +439,7 @@ describe("data narrowing — object properties", () => {
 	test("sub has no properties → no narrowing", () => {
 		const sub: JSONSchema7 = { type: "object" };
 		const result = checker.check(sub, sup, {
-			subData: { color: "red" },
+			data: { color: "red" },
 		}) as ResolvedSubsetResult;
 
 		expect(result.resolvedSub.resolved).toEqual({ type: "object" });
@@ -359,7 +454,7 @@ describe("data narrowing — object properties", () => {
 		};
 		const supNoProps: JSONSchema7 = { type: "object" };
 		const result = checker.check(sub, supNoProps, {
-			subData: { color: "red" },
+			data: { color: "red" },
 		}) as ResolvedSubsetResult;
 
 		expect(
@@ -400,7 +495,7 @@ describe("data narrowing — nested objects", () => {
 			required: ["config"],
 		};
 		const result = checker.check(sub, sup, {
-			subData: { config: { mode: "safe" } },
+			data: { config: { mode: "safe" } },
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(true);
@@ -408,7 +503,7 @@ describe("data narrowing — nested objects", () => {
 			result.resolvedSub.resolved.properties as Record<string, JSONSchema7>
 		).config;
 		const configProps = configSchema?.properties as Record<string, JSONSchema7>;
-		expect(configProps.mode).toEqual({ type: "string", enum: ["safe"] });
+		expect(configProps.mode).toEqual({ type: "string", const: "safe" });
 	});
 
 	test("deeply nested property value NOT in enum → no narrowing", () => {
@@ -439,7 +534,7 @@ describe("data narrowing — nested objects", () => {
 			required: ["config"],
 		};
 		const result = checker.check(sub, sup, {
-			subData: { config: { mode: "unknown" } },
+			data: { config: { mode: "unknown" } },
 		}) as ResolvedSubsetResult;
 
 		expect(result.isSubset).toBe(false);
@@ -476,7 +571,7 @@ describe("data narrowing — combined with if/then/else", () => {
 			},
 		};
 		const result = checker.check(sub, sup, {
-			subData: { kind: "text", value: "hello" },
+			data: { kind: "text", value: "hello" },
 		}) as ResolvedSubsetResult;
 
 		// kind should be narrowed (text is in the sup enum)
@@ -488,7 +583,7 @@ describe("data narrowing — combined with if/then/else", () => {
 		>;
 		expect(resolvedSubProps.kind).toEqual({
 			type: "string",
-			enum: ["text"],
+			const: "text",
 		});
 	});
 
@@ -519,7 +614,7 @@ describe("data narrowing — combined with if/then/else", () => {
 			},
 		};
 		const result = checker.check(sub, sup, {
-			subData: { kind: "text", value: "hello" },
+			data: { kind: "text", value: "hello" },
 		}) as ResolvedSubsetResult;
 
 		// kind gets narrowed, but value lacks minLength → not a subset
@@ -531,45 +626,46 @@ describe("data narrowing — combined with if/then/else", () => {
 		// kind still gets narrowed even though overall result is false
 		expect(resolvedSubProps.kind).toEqual({
 			type: "string",
-			enum: ["text"],
+			const: "text",
 		});
 	});
 });
 
-// ── supData narrowing ────────────────────────────────────────────────────────
+// ── data narrowing ────────────────────────────────────────────────────────
 
-describe("data narrowing — supData", () => {
-	test("supData narrows the sup schema when sub has enum", () => {
+describe("data narrowing — data", () => {
+	test("data narrows the sup schema when sub has enum", () => {
 		const sub: JSONSchema7 = {
 			type: "string",
 			enum: ["red", "green", "blue"],
 		};
 		const sup: JSONSchema7 = { type: "string" };
 		const result = checker.check(sub, sup, {
-			subData: "red",
-			supData: "red",
+			data: "red",
 		}) as ResolvedSubsetResult;
 
-		// sup gets narrowed to enum:["red"], sub already has enum
-		// sub's enum ["red","green","blue"] is NOT a subset of enum:["red"]
-		expect(result.isSubset).toBe(false);
+		// With a single `data`, the same value is used for both sub and sup.
+		// The sup is narrowed via runtime data even though it has no enum,
+		// while sub already has enum — the check still succeeds.
+		expect(result.isSubset).toBe(true);
 	});
 
-	test("supData not provided → sup not narrowed", () => {
+	test("data narrows sup with enum when sub is generic", () => {
 		const sub: JSONSchema7 = { type: "string" };
 		const sup: JSONSchema7 = {
 			type: "string",
 			enum: ["red", "green", "blue"],
 		};
 		const result = checker.check(sub, sup, {
-			subData: "red",
+			data: "red",
 		}) as ResolvedSubsetResult;
 
-		// Only sub is narrowed, sup stays the same
+		// data is used for both sub and sup — sup is narrowed to const:"red"
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSup.resolved).toEqual({
 			type: "string",
 			enum: ["red", "green", "blue"],
+			const: "red",
 		});
 	});
 });

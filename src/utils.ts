@@ -1,32 +1,33 @@
 import type { JSONSchema7Definition } from "json-schema";
+import type { Constraint } from "./types.ts";
 
 // ─── Shared Utilities ────────────────────────────────────────────────────────
 //
-// Fonctions utilitaires natives partagées entre tous les modules.
-// Centralisées ici pour éviter la duplication et permettre à V8
-// d'optimiser une seule instance de chaque fonction hot-path.
+// Native utility functions shared across all modules.
+// Centralized here to avoid duplication and allow V8
+// to optimize a single instance of each hot-path function.
 
 /**
- * Vérifie si une valeur est un plain object (pas null, pas un array).
+ * Checks whether a value is a plain object (not null, not an array).
  */
 export function isPlainObj(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
- * Vérifie si un objet possède une propriété propre.
+ * Checks whether an object has an own property.
  */
 export function hasOwn(obj: object, key: string): boolean {
 	return Object.hasOwn(obj, key);
 }
 
 /**
- * Compare deux valeurs en profondeur (deep equality).
+ * Deep equality comparison between two values.
  *
- * Optimisations :
+ * Optimizations:
  *   - Reference equality short-circuit (a === b)
- *   - Length checks avant l'itération (arrays et objects)
- *   - Pas de support pour Date, RegExp, Map, Set (pas nécessaire pour JSON Schema)
+ *   - Length checks before iteration (arrays and objects)
+ *   - No support for Date, RegExp, Map, Set (not needed for JSON Schema)
  */
 export function deepEqual(a: unknown, b: unknown): boolean {
 	if (a === b) return true;
@@ -60,12 +61,12 @@ export function deepEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Crée une copie d'un objet sans les clés spécifiées.
+ * Creates a copy of an object without the specified keys.
  *
- * Optimisé pour le cas courant (1-2 clés à omettre) :
- *   - Utilise un Set uniquement si > 2 clés
- *   - Itère une seule fois sur l'objet source
- *   - Retourne l'original si aucune clé à omettre n'est présente dans l'objet
+ * Optimized for the common case (1-2 keys to omit):
+ *   - Uses a Set only if > 2 keys
+ *   - Iterates over the source object only once
+ *   - Returns the original if no key to omit is present in the object
  */
 export function omitKeys<T extends Record<string, unknown>>(
 	obj: T,
@@ -110,14 +111,14 @@ export function omitKeys<T extends Record<string, unknown>>(
 }
 
 /**
- * Fusionne deux tableaux de strings en éliminant les doublons.
- * Retourne un tableau avec les éléments uniques des deux sources.
+ * Merges two string arrays while eliminating duplicates.
+ * Returns an array with the unique elements from both sources.
  *
- * Optimisé avec fast paths pour les cas courants :
- *   - Si b est vide → retourne a directement
- *   - Si a est vide → retourne b directement
- *   - Pour les petits tableaux (≤ 8 éléments total), utilise
- *     une boucle avec includes au lieu de créer un Set
+ * Optimized with fast paths for common cases:
+ *   - If b is empty → returns a directly
+ *   - If a is empty → returns b directly
+ *   - For small arrays (≤ 8 total elements), uses a loop with
+ *     includes instead of creating a Set
  */
 export function unionStrings(a: string[], b: string[]): string[] {
 	const aLen = a.length;
@@ -155,12 +156,58 @@ export function unionStrings(a: string[], b: string[]): string[] {
 }
 
 /**
- * Vérifie l'égalité structurelle entre deux JSONSchema7Definition.
- * Wrapper typé autour de deepEqual pour les schemas.
+ * Checks structural equality between two JSONSchema7Definition values.
+ * Typed wrapper around deepEqual for schemas.
  */
 export function schemaDeepEqual(
 	a: JSONSchema7Definition,
 	b: JSONSchema7Definition,
 ): boolean {
 	return deepEqual(a, b);
+}
+
+// ─── Constraints Helpers ─────────────────────────────────────────────────────
+
+/**
+ * Normalizes a `Constraints` value (single or array) into an array.
+ * Returns an empty array if the value is `undefined`.
+ */
+export function toConstraintArray(value: unknown): Constraint[] {
+	if (value === undefined) return [];
+	if (Array.isArray(value)) return value as Constraint[];
+	return [value as Constraint];
+}
+
+/**
+ * Merges two constraint lists by computing their **union**, deduplicated
+ * by deep equality. Two constraints are considered identical if they are
+ * deeply equal (same string, or same `{ name, params }` object).
+ *
+ * This is the correct operation for `allOf` / intersection semantics:
+ * a value must satisfy ALL constraints from both schemas.
+ *
+ * @returns The merged array, or `undefined` if both inputs are empty/absent.
+ */
+export function mergeConstraints(
+	a: unknown,
+	b: unknown,
+): Constraint[] | undefined {
+	const aArr = toConstraintArray(a);
+	const bArr = toConstraintArray(b);
+
+	if (aArr.length === 0 && bArr.length === 0) return undefined;
+	if (aArr.length === 0) return bArr.slice();
+	if (bArr.length === 0) return aArr.slice();
+
+	// Start from a copy of a, add items from b that are not already present
+	const result: Constraint[] = aArr.slice();
+	for (const bItem of bArr) {
+		const alreadyPresent = result.some((existing) =>
+			deepEqual(existing, bItem),
+		);
+		if (!alreadyPresent) {
+			result.push(bItem);
+		}
+	}
+	return result;
 }

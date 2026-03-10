@@ -1,33 +1,33 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import type { SchemaError } from "./types";
-import { hasOwn, isPlainObj } from "./utils";
+import type { Constraint, SchemaError } from "./types.ts";
+import { deepEqual, hasOwn, isPlainObj } from "./utils.ts";
 
 // ─── Semantic Error Generator ────────────────────────────────────────────────
 //
-// Génère des erreurs sémantiques lisibles en comparant directement deux schemas.
+// Generates human-readable semantic errors by directly comparing two schemas.
 //
-// Contrairement au differ structurel (qui comparait sub vs merged), ce module
-// compare directement sub (source/received) et sup (target/expected) pour
-// produire des messages d'erreur orientés métier.
+// Unlike a structural differ (which would compare sub vs merged), this module
+// directly compares sub (source/received) and sup (target/expected) to produce
+// business-oriented error messages.
 //
-// Les chemins de propriétés sont normalisés :
-//   - `accountId`       (propriété top-level)
-//   - `user.name`       (propriété imbriquée)
-//   - `users[].name`    (propriété dans les items d'un tableau)
+// Property paths are normalized:
+//   - `accountId`       (top-level property)
+//   - `user.name`       (nested property)
+//   - `users[].name`    (property inside array items)
 //
-// Convention :
-//   - `expected` = ce que le schema cible (sup) attend
-//   - `received` = ce que le schema source (sub) fournit
+// Convention:
+//   - `expected` = what the target schema (sup) expects
+//   - `received` = what the source schema (sub) provides
 
 // ─── Type Formatting ─────────────────────────────────────────────────────────
 
 /**
- * Formate les valeurs d'un enum en chaîne lisible.
+ * Formats enum values into a readable string.
  *
- * Exemples :
- *   - 1 valeur  : `"123"`
- *   - 2 valeurs : `"123 or salut"`
- *   - 3 valeurs : `"10, 20, or 30"`
+ * Examples:
+ *   - 1 value  : `"123"`
+ *   - 2 values : `"123 or hello"`
+ *   - 3 values : `"10, 20, or 30"`
  */
 function formatEnumValues(values: unknown[]): string {
 	const parts = values.map((v) =>
@@ -41,9 +41,9 @@ function formatEnumValues(values: unknown[]): string {
 }
 
 /**
- * Formate un schema en représentation de type lisible.
+ * Formats a schema into a readable type representation.
  *
- * Exemples :
+ * Examples:
  *   - `{ type: "string" }`                                    → `"string"`
  *   - `{ type: "array", items: { type: "string" } }`          → `"string[]"`
  *   - `{ type: "array", items: { type: ["string","number"] }` → `"string[] | number[]"`
@@ -53,6 +53,35 @@ function formatEnumValues(values: unknown[]): string {
  *   - `undefined`                                              → `"undefined"`
  */
 export function formatSchemaType(
+	def: JSONSchema7Definition | undefined,
+): string {
+	const base = formatSchemaTypeInternal(def);
+	if (def === undefined || typeof def === "boolean") return base;
+	return base + formatConstraintsSuffix(def as JSONSchema7);
+}
+
+/**
+ * Formats the constraints suffix for a schema type description.
+ * Returns an empty string if there are no constraints.
+ *
+ * @example
+ * formatConstraintsSuffix({ type: "string", constraints: ["IsUuid", "BelongsToScope"] })
+ * // → " [IsUuid, BelongsToScope]"
+ *
+ * formatConstraintsSuffix({ type: "string" })
+ * // → ""
+ */
+function formatConstraintsSuffix(schema: JSONSchema7): string {
+	const constraints = schema.constraints;
+	if (constraints === undefined) return "";
+
+	const arr = Array.isArray(constraints) ? constraints : [constraints];
+	if (arr.length === 0) return "";
+
+	return ` [${arr.map(formatCustomConstraint).join(", ")}]`;
+}
+
+function formatSchemaTypeInternal(
 	def: JSONSchema7Definition | undefined,
 ): string {
 	if (def === undefined) return "undefined";
@@ -136,10 +165,10 @@ export function formatSchemaType(
 // ─── Path Helpers ────────────────────────────────────────────────────────────
 
 /**
- * Construit un chemin de propriété normalisé.
- *   - Racine + clé            → `"accountId"`
- *   - Parent + clé            → `"user.name"`
- *   - Parent[] + clé          → `"users[].name"`
+ * Builds a normalized property path.
+ *   - Root + key              → `"accountId"`
+ *   - Parent + key            → `"user.name"`
+ *   - Parent[] + key          → `"users[].name"`
  */
 function joinPath(parent: string, key: string): string {
 	if (!parent) return key;
@@ -147,7 +176,7 @@ function joinPath(parent: string, key: string): string {
 }
 
 /**
- * Ajoute le suffixe `[]` pour indiquer qu'on entre dans les items d'un array.
+ * Appends the `[]` suffix to indicate entering array items.
  */
 function arrayPath(parent: string): string {
 	if (!parent) return "[]";
@@ -157,7 +186,7 @@ function arrayPath(parent: string): string {
 // ─── Schema Accessors ────────────────────────────────────────────────────────
 
 /**
- * Extrait les propriétés d'un schema de manière sûre.
+ * Safely extracts the properties from a schema.
  */
 function getProperties(
 	schema: JSONSchema7,
@@ -169,7 +198,7 @@ function getProperties(
 }
 
 /**
- * Extrait les champs required d'un schema de manière sûre.
+ * Safely extracts the required fields from a schema.
  */
 function getRequired(schema: JSONSchema7): string[] {
 	if (Array.isArray(schema.required)) {
@@ -179,7 +208,7 @@ function getRequired(schema: JSONSchema7): string[] {
 }
 
 /**
- * Détermine le type effectif d'un schema (string ou tableau de types).
+ * Determines the effective type of a schema (string or array of types).
  */
 function getEffectiveType(schema: JSONSchema7): string | string[] | undefined {
 	if (schema.type !== undefined) return schema.type as string | string[];
@@ -202,7 +231,7 @@ function getEffectiveType(schema: JSONSchema7): string | string[] | undefined {
 }
 
 /**
- * Vérifie si un type (string) est inclus dans un type ou un tableau de types.
+ * Checks whether a type (string) is included in a type or array of types.
  */
 function typeIncludes(
 	schemaType: string | string[] | undefined,
@@ -219,15 +248,15 @@ function typeIncludes(
 }
 
 /**
- * Vérifie si deux types sont compatibles.
- * Un type est compatible si le type de sub est inclus dans le type de sup.
+ * Checks whether two types are compatible.
+ * A type is compatible if the sub type is included in the sup type.
  */
 function typesAreCompatible(
 	subType: string | string[] | undefined,
 	supType: string | string[] | undefined,
 ): boolean {
-	if (supType === undefined) return true; // sup accepte tout
-	if (subType === undefined) return true; // sub indéterminé, on ne peut pas conclure
+	if (supType === undefined) return true; // sup accepts anything
+	if (subType === undefined) return true; // sub is undetermined, cannot conclude
 
 	if (typeof subType === "string" && typeof supType === "string") {
 		if (subType === supType) return true;
@@ -259,10 +288,77 @@ function typesAreCompatible(
 	return true;
 }
 
+// ─── Custom Constraint Helpers ───────────────────────────────────────────────
+
+/**
+ * Formats a custom constraint into a readable string.
+ * @example formatCustomConstraint("IsUuid") → "IsUuid"
+ * @example formatCustomConstraint({ name: "MinAge", params: { min: 21 } }) → 'MinAge({"min":21})'
+ * @example formatCustomConstraint({ name: "IsCustom" }) → "IsCustom"
+ */
+function formatCustomConstraint(c: Constraint): string {
+	if (typeof c === "string") return c;
+	if (c.params && Object.keys(c.params).length > 0) {
+		return `${c.name}(${JSON.stringify(c.params)})`;
+	}
+	return c.name;
+}
+
+/**
+ * Formats a list of custom constraints into a readable string.
+ */
+function formatCustomConstraintList(cs: Constraint[]): string {
+	return cs.map(formatCustomConstraint).join(", ");
+}
+
+/**
+ * Compares custom constraints between sub and sup.
+ *
+ * For sub ⊆ sup, every constraint in sup must have an exact match
+ * (by deep equality) in sub. Missing constraints are reported as errors.
+ */
+function checkCustomConstraints(
+	sub: JSONSchema7,
+	sup: JSONSchema7,
+	path: string,
+	errors: SchemaError[],
+): void {
+	const supConstraints = sup.constraints;
+	const subConstraints = sub.constraints;
+
+	// If sup has no constraints, nothing to check
+	if (supConstraints === undefined) return;
+
+	const supArr = Array.isArray(supConstraints)
+		? supConstraints
+		: [supConstraints];
+	const subArr =
+		subConstraints === undefined
+			? []
+			: Array.isArray(subConstraints)
+				? subConstraints
+				: [subConstraints];
+
+	// Find constraints in sup that are missing from sub
+	for (const supC of supArr) {
+		const found = subArr.some((subC) => deepEqual(subC, supC));
+		if (!found) {
+			errors.push({
+				key: path || "$root",
+				expected: `constraint: ${formatCustomConstraint(supC)}`,
+				received:
+					subArr.length > 0
+						? `constraints: ${formatCustomConstraintList(subArr)}`
+						: "no constraints",
+			});
+		}
+	}
+}
+
 // ─── Constraint Helpers ──────────────────────────────────────────────────────
 
 /**
- * Formate une valeur de contrainte en string lisible.
+ * Formats a constraint value into a readable string.
  */
 function fmtConstraint(name: string, value: unknown): string {
 	if (value === undefined) return `${name}: not set`;
@@ -273,8 +369,8 @@ function fmtConstraint(name: string, value: unknown): string {
 }
 
 /**
- * Compare une contrainte numérique "minimum-like" (sub.X doit être >= sup.X pour sub ⊆ sup).
- * Exemples : minimum, exclusiveMinimum, minLength, minItems, minProperties
+ * Compares a "minimum-like" numeric constraint (sub.X must be >= sup.X for sub ⊆ sup).
+ * Examples: minimum, exclusiveMinimum, minLength, minItems, minProperties
  */
 function checkMinConstraint(
 	subVal: number | undefined,
@@ -295,8 +391,8 @@ function checkMinConstraint(
 }
 
 /**
- * Compare une contrainte numérique "maximum-like" (sub.X doit être <= sup.X pour sub ⊆ sup).
- * Exemples : maximum, exclusiveMaximum, maxLength, maxItems, maxProperties
+ * Compares a "maximum-like" numeric constraint (sub.X must be <= sup.X for sub ⊆ sup).
+ * Examples: maximum, exclusiveMaximum, maxLength, maxItems, maxProperties
  */
 function checkMaxConstraint(
 	subVal: number | undefined,
@@ -317,7 +413,7 @@ function checkMaxConstraint(
 }
 
 /**
- * Compare les contraintes numériques entre sub et sup.
+ * Compares numeric constraints between sub and sup.
  */
 function checkNumericConstraints(
 	sub: JSONSchema7,
@@ -363,7 +459,7 @@ function checkNumericConstraints(
 }
 
 /**
- * Compare les contraintes de string entre sub et sup.
+ * Compares string constraints between sub and sup.
  */
 function checkStringConstraints(
 	sub: JSONSchema7,
@@ -414,7 +510,7 @@ function checkStringConstraints(
 }
 
 /**
- * Compare les contraintes d'objet (hors properties/required) entre sub et sup.
+ * Compares object constraints (excluding properties/required) between sub and sup.
  */
 function checkObjectConstraints(
 	sub: JSONSchema7,
@@ -425,12 +521,12 @@ function checkObjectConstraints(
 	// ── additionalProperties ──
 	if (sup.additionalProperties !== undefined) {
 		if (sup.additionalProperties === false) {
-			// sup interdit les propriétés additionnelles
+			// sup forbids additional properties
 			if (
 				sub.additionalProperties === undefined ||
 				sub.additionalProperties === true
 			) {
-				// sub les autorise → incompatible
+				// sub allows them → incompatible
 				errors.push({
 					key: path || "$root",
 					expected: "additionalProperties: false",
@@ -616,7 +712,7 @@ function checkObjectConstraints(
 }
 
 /**
- * Compare les contraintes d'array (hors items) entre sub et sup.
+ * Compares array constraints (excluding items) between sub and sup.
  */
 function checkArrayConstraints(
 	sub: JSONSchema7,
@@ -658,7 +754,7 @@ function checkArrayConstraints(
 }
 
 /**
- * Détecte si un schema a un type numérique.
+ * Detects whether a schema has a numeric type.
  */
 function isNumericType(t: string | string[] | undefined): boolean {
 	if (t === undefined) return false;
@@ -667,7 +763,7 @@ function isNumericType(t: string | string[] | undefined): boolean {
 }
 
 /**
- * Détecte si un schema a un type string.
+ * Detects whether a schema has a string type.
  */
 function isStringType(t: string | string[] | undefined): boolean {
 	if (t === undefined) return false;
@@ -676,7 +772,7 @@ function isStringType(t: string | string[] | undefined): boolean {
 }
 
 /**
- * Détecte si un schema a un type object.
+ * Detects whether a schema has an object type.
  */
 function isObjectType(t: string | string[] | undefined): boolean {
 	if (t === undefined) return false;
@@ -685,7 +781,7 @@ function isObjectType(t: string | string[] | undefined): boolean {
 }
 
 /**
- * Détecte si un schema a un type array.
+ * Detects whether a schema has an array type.
  */
 function isArrayType(t: string | string[] | undefined): boolean {
 	if (t === undefined) return false;
@@ -742,12 +838,12 @@ function hasArrayKeywords(s: JSONSchema7): boolean {
 // ─── Core Comparison ─────────────────────────────────────────────────────────
 
 /**
- * Compare deux schemas et produit des erreurs sémantiques.
+ * Compares two schemas and produces semantic errors.
  *
- * @param sub   Le schema source (ce qui est produit / received)
- * @param sup   Le schema cible (ce qui est attendu / expected)
- * @param path  Le chemin normalisé courant
- * @returns     Liste d'erreurs sémantiques
+ * @param sub   The source schema (what is produced / received)
+ * @param sup   The target schema (what is expected)
+ * @param path  The current normalized path
+ * @returns     List of semantic errors
  */
 export function computeSemanticErrors(
 	sub: JSONSchema7Definition,
@@ -812,7 +908,7 @@ export function computeSemanticErrors(
 			// For sub ⊆ sup, sub.not must be at least as broad as sup.not
 			// (i.e. sub excludes at least as much). We report if they differ.
 			const subNotSchema = subSchema.not as JSONSchema7;
-			if (!deepEqualPrimitive(subNotSchema, notSchema)) {
+			if (!deepEqual(subNotSchema, notSchema)) {
 				errors.push({
 					key: path || "$root",
 					expected: `not ${notFormatted}`,
@@ -905,6 +1001,9 @@ export function computeSemanticErrors(
 			}
 		}
 
+		// ── Custom constraints ──
+		checkCustomConstraints(subSchema, supSchema, path, errors);
+
 		// ── Object-level constraints ──
 		checkObjectConstraints(subSchema, supSchema, path, errors);
 
@@ -966,6 +1065,9 @@ export function computeSemanticErrors(
 			}
 		}
 
+		// ── Custom constraints ──
+		checkCustomConstraints(subSchema, supSchema, path, errors);
+
 		// ── Array-level constraints ──
 		checkArrayConstraints(subSchema, supSchema, path, errors);
 
@@ -989,7 +1091,7 @@ export function computeSemanticErrors(
 		if (Array.isArray(subSchema.enum)) {
 			// Both have enums — check if sub.enum ⊆ sup.enum
 			const subExtra = subSchema.enum.filter(
-				(v) => !supSchema.enum?.some((sv) => deepEqualPrimitive(v, sv)),
+				(v) => !supSchema.enum?.some((sv) => deepEqual(v, sv)),
 			);
 			if (subExtra.length > 0) {
 				errors.push({
@@ -1001,7 +1103,7 @@ export function computeSemanticErrors(
 		} else if (hasOwn(subSchema, "const")) {
 			// sub has const, sup has enum — check inclusion
 			const constInEnum = supSchema.enum.some((v) =>
-				deepEqualPrimitive(v, subSchema.const),
+				deepEqual(v, subSchema.const),
 			);
 			if (!constInEnum) {
 				errors.push({
@@ -1023,7 +1125,7 @@ export function computeSemanticErrors(
 
 	// ── Const comparison ──
 	if (hasOwn(supSchema, "const") && hasOwn(subSchema, "const")) {
-		if (!deepEqualPrimitive(supSchema.const, subSchema.const)) {
+		if (!deepEqual(supSchema.const, subSchema.const)) {
 			errors.push({
 				key: path || "$root",
 				expected: formatSchemaType(supSchema),
@@ -1035,6 +1137,9 @@ export function computeSemanticErrors(
 
 	// ── Same-type constraint comparison ──
 	// Types are compatible (or unspecified), now check individual keywords.
+
+	// ── Custom constraints (applies to all types) ──
+	checkCustomConstraints(subSchema, supSchema, path, errors);
 
 	if (
 		isNumericType(subType) ||
@@ -1099,8 +1204,8 @@ export function computeSemanticErrors(
 // ─── Property Schema Comparison ──────────────────────────────────────────────
 
 /**
- * Compare deux schemas de propriété et produit des erreurs.
- * Gère la récursion dans les objets imbriqués et les tableaux.
+ * Compares two property schemas and produces errors.
+ * Handles recursion into nested objects and arrays.
  */
 function comparePropertySchemas(
 	subDef: JSONSchema7Definition,
@@ -1130,7 +1235,7 @@ function comparePropertySchemas(
 	if (Array.isArray(supSchema.enum)) {
 		if (Array.isArray(subSchema.enum)) {
 			const subExtra = subSchema.enum.filter(
-				(v) => !supSchema.enum?.some((sv) => deepEqualPrimitive(v, sv)),
+				(v) => !supSchema.enum?.some((sv) => deepEqual(v, sv)),
 			);
 			if (subExtra.length > 0) {
 				return [
@@ -1145,7 +1250,7 @@ function comparePropertySchemas(
 		}
 		if (hasOwn(subSchema, "const")) {
 			const constInEnum = supSchema.enum.some((v) =>
-				deepEqualPrimitive(v, subSchema.const),
+				deepEqual(v, subSchema.const),
 			);
 			if (!constInEnum) {
 				return [
@@ -1170,7 +1275,7 @@ function comparePropertySchemas(
 
 	// ── Const comparison ──
 	if (hasOwn(supSchema, "const") && hasOwn(subSchema, "const")) {
-		if (!deepEqualPrimitive(supSchema.const, subSchema.const)) {
+		if (!deepEqual(supSchema.const, subSchema.const)) {
 			return [
 				{
 					key: path,
@@ -1202,11 +1307,11 @@ function comparePropertySchemas(
 // ─── Branch Error Computation ────────────────────────────────────────────────
 
 /**
- * Quand sup a des branches (anyOf/oneOf), tente de trouver la branche
- * la plus proche et génère les erreurs contre celle-ci.
+ * When sup has branches (anyOf/oneOf), attempts to find the closest
+ * matching branch and generates errors against it.
  *
- * Stratégie : calculer les erreurs pour chaque branche et retourner
- * celles de la branche avec le moins d'erreurs (meilleur match).
+ * Strategy: compute errors for each branch and return those from the
+ * branch with the fewest errors (best match).
  */
 function computeErrorsAgainstBranches(
 	sub: JSONSchema7,
@@ -1232,36 +1337,4 @@ function computeErrorsAgainstBranches(
 			},
 		]
 	);
-}
-
-// ─── Primitive Deep Equal ────────────────────────────────────────────────────
-
-/**
- * Comparaison d'égalité profonde pour des valeurs JSON primitives et tableaux.
- * Utilisé pour la comparaison d'enums et de consts.
- */
-function deepEqualPrimitive(a: unknown, b: unknown): boolean {
-	if (a === b) return true;
-	if (a === null || b === null) return false;
-	if (typeof a !== typeof b) return false;
-	if (typeof a === "object") {
-		if (Array.isArray(a)) {
-			if (!Array.isArray(b)) return false;
-			if (a.length !== b.length) return false;
-			for (let i = 0; i < a.length; i++) {
-				if (!deepEqualPrimitive(a[i], b[i])) return false;
-			}
-			return true;
-		}
-		if (Array.isArray(b)) return false;
-		const aObj = a as Record<string, unknown>;
-		const bObj = b as Record<string, unknown>;
-		const aKeys = Object.keys(aObj);
-		if (aKeys.length !== Object.keys(bObj).length) return false;
-		for (const key of aKeys) {
-			if (!deepEqualPrimitive(aObj[key], bObj[key])) return false;
-		}
-		return true;
-	}
-	return false;
 }

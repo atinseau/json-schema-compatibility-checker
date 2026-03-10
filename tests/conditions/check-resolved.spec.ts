@@ -10,6 +10,10 @@ beforeAll(() => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  check with conditions — combining resolution + subset check
+//
+//  With the `{ data }` API, `data` is a concrete runtime instance.
+//  It must validate against both resolved sub and resolved sup schemas.
+//  If data is incomplete or invalid, runtime validation fails → isSubset: false.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("check with conditions", () => {
@@ -45,9 +49,9 @@ describe("check with conditions", () => {
 		// Without resolution: false (known limitation)
 		expect(checker.isSubset(sub, conditionalSup)).toBe(false);
 
-		// With resolution: true!
+		// With resolution: true! data is a complete instance matching the then-branch.
 		const result = checker.check(sub, conditionalSup, {
-			subData: { kind: "text" },
+			data: { kind: "text", value: "hello" },
 		});
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSup.branch).toBe("then");
@@ -64,7 +68,7 @@ describe("check with conditions", () => {
 		};
 
 		const result = checker.check(sub, conditionalSup, {
-			subData: { kind: "data" },
+			data: { kind: "data", value: 42 },
 		});
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSup.branch).toBe("else");
@@ -80,8 +84,11 @@ describe("check with conditions", () => {
 			required: ["kind", "value"],
 		};
 
+		// data matches the then-branch resolution, but sub declares value: number
+		// which conflicts with the resolved sup's value: string.
+		// Runtime validation of data against sub fails (value is string but sub says number).
 		const result = checker.check(sub, conditionalSup, {
-			subData: { kind: "text" },
+			data: { kind: "text", value: "hello" },
 		});
 		expect(result.isSubset).toBe(false);
 	});
@@ -97,7 +104,7 @@ describe("check with conditions", () => {
 		};
 
 		const result = checker.check(sub, conditionalSup, {
-			subData: { kind: "text" },
+			data: { kind: "text", value: "hello" },
 		});
 
 		expect(result.resolvedSub).toBeDefined();
@@ -106,7 +113,7 @@ describe("check with conditions", () => {
 		expect(result.resolvedSup.discriminant).toEqual({ kind: "text" });
 	});
 
-	test("uses subData for both sub and sup when supData is omitted", () => {
+	test("uses data for both sub and sup when data resolves conditions on both", () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -119,30 +126,36 @@ describe("check with conditions", () => {
 		};
 
 		const result = checker.check(sub, conditionalSup, {
-			subData: { kind: "text" },
+			data: { kind: "text", value: "hello" },
 		});
 
-		// Both resolved with { kind: "text" }
+		// Both resolved with { kind: "text", value: "hello" }
 		expect(result.resolvedSub.branch).toBe("then");
 		expect(result.resolvedSup.branch).toBe("then");
 	});
 
-	test("uses separate supData when provided", () => {
+	test("uses same data for both sub and sup resolution", () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: { kind: { const: "text" }, value: { type: "string" } },
 			required: ["kind", "value"],
 		};
 
+		// Same data resolves both sub and sup conditions identically
 		const resultThen = checker.check(sub, conditionalSup, {
-			subData: { kind: "text" },
-			supData: { kind: "text" },
+			data: { kind: "text", value: "hello" },
 		});
 		expect(resultThen.resolvedSup.branch).toBe("then");
+		expect(resultThen.resolvedSub.branch).toBeNull(); // sub has no if/then/else
 
-		const resultElse = checker.check(sub, conditionalSup, {
-			subData: { kind: "text" },
-			supData: { kind: "other" },
+		// Different data value triggers else branch for both
+		const subElse: JSONSchema7 = {
+			type: "object",
+			properties: { kind: { const: "other" }, value: { type: "number" } },
+			required: ["kind", "value"],
+		};
+		const resultElse = checker.check(subElse, conditionalSup, {
+			data: { kind: "other", value: 42 },
 		});
 		expect(resultElse.resolvedSup.branch).toBe("else");
 	});
@@ -191,9 +204,14 @@ describe("check with conditions", () => {
 		// Without resolution: false (known limitation — if/then/else gets added)
 		expect(checker.isSubset(businessOutput, formSchema)).toBe(false);
 
-		// With resolution: true!
+		// With resolution: true! Data is a complete business instance.
 		const result = checker.check(businessOutput, formSchema, {
-			subData: { accountType: "business" },
+			data: {
+				accountType: "business",
+				email: "ceo@acme.com",
+				companyName: "ACME Corp",
+				taxId: "123-456-789",
+			},
 		});
 		expect(result.isSubset).toBe(true);
 	});
@@ -236,7 +254,12 @@ describe("check with conditions", () => {
 		};
 
 		const result = checker.check(personalOutput, formSchema, {
-			subData: { accountType: "personal" },
+			data: {
+				accountType: "personal",
+				email: "alice@example.com",
+				firstName: "Alice",
+				lastName: "Dupont",
+			},
 		});
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSup.branch).toBe("else");
@@ -269,7 +292,7 @@ describe("check with conditions", () => {
 		};
 
 		const result = checker.check(incomplete, formSchema, {
-			subData: { accountType: "business" },
+			data: { accountType: "business", email: "test@example.com" },
 		});
 		expect(result.isSubset).toBe(false);
 	});
@@ -287,7 +310,10 @@ describe("check with conditions", () => {
 						retries: { type: "integer" },
 					},
 					required: ["mode"],
-					if: { properties: { mode: { const: "safe" } }, required: ["mode"] },
+					if: {
+						properties: { mode: { const: "safe" } },
+						required: ["mode"],
+					},
 					then: {
 						required: ["retries"],
 						properties: { retries: { type: "integer", minimum: 3 } },
@@ -305,7 +331,11 @@ describe("check with conditions", () => {
 				config: {
 					type: "object",
 					properties: {
-						mode: { const: "safe", type: "string", enum: ["fast", "safe"] },
+						mode: {
+							const: "safe",
+							type: "string",
+							enum: ["fast", "safe"],
+						},
 						retries: { type: "integer", minimum: 5 },
 					},
 					required: ["mode", "retries"],
@@ -315,8 +345,29 @@ describe("check with conditions", () => {
 		};
 
 		const result = checker.check(sub, sup, {
-			subData: { config: { mode: "safe" } },
+			data: { config: { mode: "safe", retries: 5 } },
 		});
 		expect(result.isSubset).toBe(true);
+	});
+
+	// ── Partial data triggers runtime validation failure ────────────────────
+
+	test("partial data (missing required field) → runtime validation fails", () => {
+		const sub: JSONSchema7 = {
+			type: "object",
+			properties: {
+				kind: { const: "text" },
+				value: { type: "string", minLength: 1 },
+			},
+			required: ["kind", "value"],
+		};
+
+		// Data is missing `value` — both sub and conditionalSup require it.
+		// Runtime validation catches this → isSubset: false with errors.
+		const result = checker.check(sub, conditionalSup, {
+			data: { kind: "text" },
+		});
+		expect(result.isSubset).toBe(false);
+		expect(result.errors.length).toBeGreaterThan(0);
 	});
 });

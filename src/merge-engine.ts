@@ -14,33 +14,39 @@ import type {
 	JSONSchema7Type,
 } from "json-schema";
 
-import { isFormatSubset } from "./format-validator";
-import { deepEqual, hasOwn, isPlainObj, unionStrings } from "./utils";
+import { isFormatSubset } from "./format-validator.ts";
+import {
+	deepEqual,
+	hasOwn,
+	isPlainObj,
+	mergeConstraints,
+	unionStrings,
+} from "./utils.ts";
 
 // ─── Merge Engine ────────────────────────────────────────────────────────────
 //
-// Encapsule la librairie `@x0k/json-schema-merge` et expose une API simple
-// pour merger et comparer des JSON Schemas.
+// Wraps the `@x0k/json-schema-merge` library and exposes a simple API
+// for merging and comparing JSON Schemas.
 //
-// Principe mathématique :
-//   A ∩ B  =  allOf([A, B])  résolu via shallow merge
+// Mathematical principle:
+//   A ∩ B  =  allOf([A, B])  resolved via shallow merge
 //   A ≡ B  ⟺  compare(A, B) === 0
 //
-// Pré-checks avant merge :
-//   - `hasDeepConstConflict` : détecte les conflits de `const`/`enum`
-//   - `hasAdditionalPropertiesConflict` : détecte les conflits `additionalProperties`
-//   - `hasFormatConflict` : détecte les conflits de `format` entre deux schemas
+// Pre-checks before merge:
+//   - `hasDeepConstConflict`: detects `const`/`enum` conflicts
+//   - `hasAdditionalPropertiesConflict`: detects `additionalProperties` conflicts
+//   - `hasFormatConflict`: detects `format` conflicts between two schemas
 
 // ─── Const conflict detection ────────────────────────────────────────────────
 
 /**
- * Détecte un conflit de `const` entre deux schemas.
+ * Detects a `const` conflict between two schemas.
  *
- * Cas 1 — const vs const : les deux schemas ont un `const` avec des valeurs
- *   différentes → intersection vide.
+ * Case 1 — const vs const: both schemas have a `const` with different
+ *   values → empty intersection.
  *
- * Cas 2 — const vs enum : un schema a `const`, l'autre a `enum`.
- *   Si la valeur de `const` n'est pas dans l'`enum` → intersection vide.
+ * Case 2 — const vs enum: one schema has `const`, the other has `enum`.
+ *   If the `const` value is not in the `enum` → empty intersection.
  *
  * Uses `deepEqual` from `utils.ts` for deep comparison (objects, arrays).
  */
@@ -57,12 +63,12 @@ function hasConstConflict(
 	const aEnum = a.enum as unknown[] | undefined;
 	const bEnum = b.enum as unknown[] | undefined;
 
-	// Cas 1 — const vs const
+	// Case 1 — const vs const
 	if (aHasConst && bHasConst) {
 		return !deepEqual(aConst, bConst);
 	}
 
-	// Cas 2 — const vs enum
+	// Case 2 — const vs enum
 	if (aHasConst && Array.isArray(bEnum)) {
 		return !bEnum.some((v) => deepEqual(v, aConst));
 	}
@@ -73,7 +79,7 @@ function hasConstConflict(
 	return false;
 }
 
-/** Mots-clés contenant un unique sous-schema à vérifier récursivement */
+/** Keywords containing a single sub-schema to check recursively */
 const SINGLE_SCHEMA_CONFLICT_KEYS = [
 	"items",
 	"additionalProperties",
@@ -82,22 +88,22 @@ const SINGLE_SCHEMA_CONFLICT_KEYS = [
 	"not",
 ] as const;
 
-/** Mots-clés contenant un Record<string, JSONSchema7Definition> */
+/** Keywords containing a Record<string, JSONSchema7Definition> */
 const PROPERTIES_MAP_CONFLICT_KEYS = [
 	"properties",
 	"patternProperties",
 ] as const;
 
 /**
- * Détecte récursivement les conflits de `const` dans les sous-schemas.
+ * Recursively detects `const` conflicts in sub-schemas.
  *
- * Quand la librairie de merge fait un shallow merge, les sous-schemas
- * imbriqués peuvent aussi avoir des conflits de `const` masqués
- * (elle utilise `identity` pour `const`).
+ * When the merge library performs a shallow merge, nested sub-schemas
+ * can also have hidden `const` conflicts
+ * (it uses `identity` for `const`).
  *
- * Récurse dans :
- *   - `properties`, `patternProperties` (clés communes)
- *   - `items` (single schema), tuple `items` (par index)
+ * Recurses into:
+ *   - `properties`, `patternProperties` (common keys)
+ *   - `items` (single schema), tuple `items` (by index)
  *   - `additionalProperties`, `contains`, `propertyNames`, `not`
  */
 function hasDeepConstConflict(
@@ -174,39 +180,36 @@ function hasDeepConstConflict(
 // ─── additionalProperties conflict detection ─────────────────────────────────
 
 /**
- * Détecte un conflit entre `additionalProperties` et les propriétés extra
- * **requises** de l'autre schema.
+ * Detects a conflict between `additionalProperties` and the extra
+ * **required** properties of the other schema.
  *
- * ⚠️  Cette fonction est **ultra-conservatrice** : elle ne détecte que les
- * conflits où une propriété est à la fois :
- *   - INTERDITE par `additionalProperties: false` d'un côté
- *   - REQUISE (`required`) par l'autre côté
- *   - ABSENTE des `properties` du côté restrictif
- *   - ET le côté restrictif AUSSI a un `required` qui rend l'objet non-vide
- *     (sinon la librairie gère déjà le cas en excluant les propriétés extra)
+ * ⚠️  This function is **ultra-conservative**: it only detects conflicts
+ * where a property is simultaneously:
+ *   - FORBIDDEN by `additionalProperties: false` on one side
+ *   - REQUIRED (`required`) by the other side
+ *   - ABSENT from `properties` on the restrictive side
+ *   - AND the restrictive side ALSO has a `required` that makes the object non-empty
+ *     (otherwise the library already handles the case by excluding extra properties)
  *
- * La librairie de merge (`@x0k/json-schema-merge`) gère DÉJÀ correctement
- * le cas `additionalProperties: false` avec des propriétés simplement DÉFINIES
- * (non requises) dans l'autre schema — elle les exclut du résultat.
- * On ne détecte donc QUE les contradictions `required` impossibles à résoudre.
+ * The merge library (`@x0k/json-schema-merge`) ALREADY correctly handles
+ * the `additionalProperties: false` case with properties that are merely DEFINED
+ * (not required) in the other schema — it excludes them from the result.
+ * We therefore only detect `required` contradictions that are impossible to resolve.
  *
- * Cas gérés :
- *   1. `a` a `additionalProperties: false` et `b` REQUIERT des propriétés
- *      absentes de `a.properties`, ET ces propriétés sont dans `b.properties`
- *      → conflit certain (intersection vide car b exige, a interdit)
- *   2. Symétrique pour `b.additionalProperties: false`
- *   3. `additionalProperties` comme schema → vérifier la compatibilité de type
- *      des propriétés extra REQUISES uniquement
- *   4. Récursion dans les propriétés communes (sous-objets)
+ * Cases handled:
+ *   1. `a` has `additionalProperties: false` and `b` REQUIRES properties
+ *      absent from `a.properties`, AND those properties are in `b.properties`
+ *      → certain conflict (empty intersection because b requires, a forbids)
+ *   2. Symmetric for `b.additionalProperties: false`
+ *   3. `additionalProperties` as a schema → check type compatibility
+ *      of extra REQUIRED properties only
+ *   4. Recursion into common properties (sub-objects)
  *
- * ⚠️  Ne vérifie que les clés de `properties`, pas les `patternProperties`
- * (trop complexe à résoudre statiquement).
+ * ⚠️  Only checks keys from `properties`, not `patternProperties`
+ * (too complex to resolve statically).
  *
- * Retourne `true` si un conflit évident est détecté, `false` sinon.
- * En cas de doute → `false` (conservateur, laisser le merge décider).
- *
- * Utilise `_.keys`, `_.some`, `_.every`, `_.has`, `_.get`, `_.isPlainObject`,
- * `_.includes` pour des vérifications concises.
+ * Returns `true` if an obvious conflict is detected, `false` otherwise.
+ * When in doubt → `false` (conservative, let the merge decide).
  */
 function hasAdditionalPropertiesConflict(
 	a: JSONSchema7Definition,
@@ -221,7 +224,7 @@ function hasAdditionalPropertiesConflict(
 		? (b.properties as Record<string, JSONSchema7Definition>)
 		: undefined;
 
-	// Si aucun des deux n'a de properties, on ne peut rien déterminer
+	// If neither has properties, we cannot determine anything
 	if (!aProps && !bProps) return false;
 
 	const aKeys = aProps ? Object.keys(aProps) : [];
@@ -229,22 +232,22 @@ function hasAdditionalPropertiesConflict(
 	const aRequired = Array.isArray(a.required) ? (a.required as string[]) : [];
 	const bRequired = Array.isArray(b.required) ? (b.required as string[]) : [];
 
-	// ── Vérifier additionalProperties: false de a vs propriétés REQUISES extra de b ──
-	// Condition stricte : b doit DÉFINIR la propriété dans b.properties ET la
-	// REQUÉRIR dans b.required, ET cette propriété doit être ABSENTE de a.properties.
-	// De plus, a doit lui-même avoir des propriétés (sinon on ne peut rien dire).
+	// ── Check additionalProperties: false of a vs extra REQUIRED properties of b ──
+	// Strict condition: b must DEFINE the property in b.properties AND
+	// REQUIRE it in b.required, AND this property must be ABSENT from a.properties.
+	// Additionally, a must itself have properties (otherwise we can't determine anything).
 	if (a.additionalProperties === false && aProps && bProps) {
 		const hasRequiredExtra = bRequired.some(
 			(k) => !hasOwn(aProps, k) && hasOwn(bProps, k),
 		);
-		// Ne détecter le conflit que si a a aussi un required qui rend l'objet
-		// structurellement contraint (pas un schema vague)
+		// Only detect the conflict if a also has a required that makes the object
+		// structurally constrained (not a vague schema)
 		if (hasRequiredExtra && aKeys.length > 0) return true;
 	}
 
-	// ── Vérification du cas additionalProperties comme schema ──
-	// Si a.additionalProperties est un schema avec un type, et que b REQUIERT
-	// une propriété extra dont le type est incompatible → conflit
+	// ── Check for additionalProperties as a schema ──
+	// If a.additionalProperties is a schema with a type, and b REQUIRES
+	// an extra property whose type is incompatible → conflict
 	if (
 		isPlainObj(a.additionalProperties) &&
 		typeof a.additionalProperties !== "boolean" &&
@@ -277,7 +280,7 @@ function hasAdditionalPropertiesConflict(
 		}
 	}
 
-	// ── Vérification symétrique : additionalProperties de b vs propriétés REQUISES extra de a ──
+	// ── Symmetric check: additionalProperties of b vs extra REQUIRED properties of a ──
 	if (b.additionalProperties === false && bProps && aProps) {
 		const hasRequiredExtra = aRequired.some(
 			(k) => !hasOwn(bProps, k) && hasOwn(aProps, k),
@@ -285,7 +288,7 @@ function hasAdditionalPropertiesConflict(
 		if (hasRequiredExtra && bKeys.length > 0) return true;
 	}
 
-	// Symétrique pour additionalProperties comme schema
+	// Symmetric for additionalProperties as a schema
 	if (
 		isPlainObj(b.additionalProperties) &&
 		typeof b.additionalProperties !== "boolean" &&
@@ -318,9 +321,9 @@ function hasAdditionalPropertiesConflict(
 		}
 	}
 
-	// ── Récursion dans les propriétés communes ──
-	// Si les deux schemas ont des propriétés communes qui sont des objets,
-	// vérifier récursivement les conflits additionalProperties
+	// ── Recursion into common properties ──
+	// If both schemas have common properties that are objects,
+	// recursively check additionalProperties conflicts
 	if (aProps && bProps) {
 		for (const k of aKeys) {
 			if (!hasOwn(bProps, k)) continue;
@@ -345,22 +348,22 @@ function hasAdditionalPropertiesConflict(
 // ─── Format conflict detection ───────────────────────────────────────────────
 
 /**
- * Détecte un conflit de format entre deux schemas.
+ * Detects a format conflict between two schemas.
  *
- * ⚠️  Ne se déclenche QUE quand les DEUX schemas ont un `format`.
- * Si un seul schema a un `format`, il n'y a PAS de conflit — le merge
- * engine gère nativement ce cas (le format est conservé dans l'intersection,
- * et la comparaison `merged ≡ sub` détermine correctement la relation ⊆).
+ * ⚠️  Only triggers when BOTH schemas have a `format`.
+ * If only one schema has a `format`, there is NO conflict — the merge
+ * engine handles this case natively (the format is preserved in the intersection,
+ * and the `merged ≡ sub` comparison correctly determines the ⊆ relation).
  *
- * Deux schemas avec des formats différents et sans relation d'inclusion
- * connue ont une intersection vide (ex: "email" ∩ "ipv4" = ∅).
+ * Two schemas with different formats and no known inclusion relation
+ * have an empty intersection (e.g., "email" ∩ "ipv4" = ∅).
  *
- * Utilise `isFormatSubset` de `format-validator.ts` pour vérifier la hiérarchie.
+ * Uses `isFormatSubset` from `format-validator.ts` to check the hierarchy.
  *
- * Récurse dans les sous-schemas (`properties`, `items`, etc.) pour détecter
- * les conflits de format imbriqués.
+ * Recurses into sub-schemas (`properties`, `items`, etc.) to detect
+ * nested format conflicts.
  *
- * @returns `true` si un conflit de format est détecté, `false` sinon
+ * @returns `true` if a format conflict is detected, `false` otherwise
  */
 function hasFormatConflict(
 	a: JSONSchema7Definition,
@@ -368,28 +371,28 @@ function hasFormatConflict(
 ): boolean {
 	if (typeof a === "boolean" || typeof b === "boolean") return false;
 
-	// ── Seulement quand LES DEUX ont un format ──
-	// Si un seul a un format → pas de conflit, le merge gère nativement
+	// ── Only when BOTH have a format ──
+	// If only one has a format → no conflict, the merge handles it natively
 	if (hasOwn(a, "format") && hasOwn(b, "format")) {
 		const aFormat = a.format as string;
 		const bFormat = b.format as string;
 
-		// Même format → pas de conflit
+		// Same format → no conflict
 		if (aFormat !== bFormat) {
-			// Vérifier si l'un est un sous-ensemble de l'autre via la hiérarchie
+			// Check if one is a subset of the other via the hierarchy
 			const subsetCheck = isFormatSubset(aFormat, bFormat);
 			if (subsetCheck !== true) {
 				const reverseCheck = isFormatSubset(bFormat, aFormat);
 				if (reverseCheck !== true) {
-					// Formats différents sans relation connue → conflit
+					// Different formats with no known relation → conflict
 					return true;
 				}
 			}
 		}
 	}
 
-	// ── Récursion dans les sous-schemas ──
-	// Vérifier les conflits de format dans les propriétés communes
+	// ── Recursion into sub-schemas ──
+	// Check format conflicts in common properties
 	if (isPlainObj(a.properties) && isPlainObj(b.properties)) {
 		const aMap = a.properties as Record<string, JSONSchema7Definition>;
 		const bMap = b.properties as Record<string, JSONSchema7Definition>;
@@ -407,7 +410,7 @@ function hasFormatConflict(
 		}
 	}
 
-	// Vérifier items (single schema)
+	// Check items (single schema)
 	if (isPlainObj(a.items) && isPlainObj(b.items)) {
 		if (
 			hasFormatConflict(
@@ -418,7 +421,7 @@ function hasFormatConflict(
 			return true;
 	}
 
-	// Vérifier additionalProperties
+	// Check additionalProperties
 	if (
 		isPlainObj(a.additionalProperties) &&
 		isPlainObj(b.additionalProperties)
@@ -433,6 +436,363 @@ function hasFormatConflict(
 	}
 
 	return false;
+}
+
+// ─── Constraints merge helpers ───────────────────────────────────────────────
+
+// `toConstraintArray` and `mergeConstraints` are imported from `./utils.ts`.
+// They are shared with `condition-resolver.ts`.
+
+/**
+ * Returns `true` if the schema (or any of its nested sub-schemas) contains
+ * the custom `constraints` keyword. Used as a cheap guard to skip the
+ * expensive `applyConstraintsMerge` post-processor when no constraints
+ * exist in either input — which is the overwhelmingly common case.
+ *
+ * Recurses into: `properties`, `patternProperties`, `items` (single or
+ * tuple), `additionalProperties`, `dependencies` (schema form).
+ */
+function hasConstraintsAnywhere(schema: JSONSchema7Definition): boolean {
+	if (typeof schema === "boolean") return false;
+
+	if (hasOwn(schema, "constraints") && schema.constraints !== undefined) {
+		return true;
+	}
+
+	if (isPlainObj(schema.properties)) {
+		const props = schema.properties as Record<string, JSONSchema7Definition>;
+		for (const key of Object.keys(props)) {
+			const prop = props[key];
+			if (prop !== undefined && hasConstraintsAnywhere(prop)) return true;
+		}
+	}
+
+	if (isPlainObj(schema.patternProperties)) {
+		const pp = schema.patternProperties as Record<
+			string,
+			JSONSchema7Definition
+		>;
+		for (const key of Object.keys(pp)) {
+			const val = pp[key];
+			if (val !== undefined && hasConstraintsAnywhere(val)) return true;
+		}
+	}
+
+	if (Array.isArray(schema.items)) {
+		for (const item of schema.items as JSONSchema7Definition[]) {
+			if (item !== undefined && hasConstraintsAnywhere(item)) return true;
+		}
+	} else if (isPlainObj(schema.items)) {
+		if (hasConstraintsAnywhere(schema.items as JSONSchema7Definition))
+			return true;
+	}
+
+	if (isPlainObj(schema.additionalProperties)) {
+		if (
+			hasConstraintsAnywhere(
+				schema.additionalProperties as JSONSchema7Definition,
+			)
+		)
+			return true;
+	}
+
+	if (isPlainObj(schema.dependencies)) {
+		const deps = schema.dependencies as Record<
+			string,
+			JSONSchema7Definition | string[]
+		>;
+		for (const key of Object.keys(deps)) {
+			const val = deps[key];
+			if (
+				val !== undefined &&
+				!Array.isArray(val) &&
+				hasConstraintsAnywhere(val as JSONSchema7Definition)
+			)
+				return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Recursively applies constraint merging to a schema that was produced
+ * by the `shallowAllOfMerge` engine. The external library does not know
+ * about our custom `constraints` keyword, so it applies an arbitrary
+ * default (identity / last-wins). This post-processor walks the merged
+ * result and replaces `constraints` with the proper union from both
+ * original input schemas.
+ *
+ * **Performance guard:** If neither `a` nor `b` contains `constraints`
+ * anywhere in their schema tree, returns `merged` immediately with zero
+ * allocation. This is the overwhelmingly common case (schemas without
+ * custom constraints), so the guard eliminates the shallow copy + recursion
+ * overhead that was causing a ~10-25% regression on every merge call.
+ *
+ * Recurses into: `properties`, `patternProperties`, `items` (single or
+ * tuple), `additionalProperties`, `dependencies` (schema form).
+ */
+function applyConstraintsMerge(
+	merged: JSONSchema7Definition,
+	a: JSONSchema7Definition,
+	b: JSONSchema7Definition,
+): JSONSchema7Definition {
+	if (typeof merged === "boolean") return merged;
+	if (typeof a === "boolean" || typeof b === "boolean") return merged;
+
+	// ── Fast path: no constraints anywhere → return merged as-is ──
+	// The guard checks only the original inputs (a, b). If neither has
+	// constraints, the merged result cannot have meaningful constraints
+	// either — skip the shallow copy and recursive traversal entirely.
+	if (!hasConstraintsAnywhere(a) && !hasConstraintsAnywhere(b)) {
+		return merged;
+	}
+
+	let changed = false;
+	const result = { ...merged };
+
+	// ── Root-level constraints ──
+	const mergedConstraints = mergeConstraints(a.constraints, b.constraints);
+	const currentConstraints = result.constraints;
+
+	if (mergedConstraints !== undefined) {
+		if (!deepEqual(currentConstraints, mergedConstraints)) {
+			result.constraints = mergedConstraints;
+			changed = true;
+		}
+	} else if (currentConstraints !== undefined) {
+		delete result.constraints;
+		changed = true;
+	}
+
+	// ── Recurse into properties ──
+	if (
+		isPlainObj(result.properties) &&
+		(isPlainObj(a.properties) || isPlainObj(b.properties))
+	) {
+		const mergedProps = result.properties as Record<
+			string,
+			JSONSchema7Definition
+		>;
+		const aProps = (a.properties ?? {}) as Record<
+			string,
+			JSONSchema7Definition
+		>;
+		const bProps = (b.properties ?? {}) as Record<
+			string,
+			JSONSchema7Definition
+		>;
+
+		let propsChanged = false;
+		const newProps: Record<string, JSONSchema7Definition> = {};
+
+		for (const key of Object.keys(mergedProps)) {
+			const mProp = mergedProps[key];
+			const aProp = aProps[key];
+			const bProp = bProps[key];
+
+			if (mProp === undefined) continue;
+
+			// Only recurse if both originals exist and are object schemas
+			if (
+				aProp !== undefined &&
+				bProp !== undefined &&
+				typeof mProp !== "boolean" &&
+				typeof aProp !== "boolean" &&
+				typeof bProp !== "boolean"
+			) {
+				const patched = applyConstraintsMerge(mProp, aProp, bProp);
+				newProps[key] = patched;
+				if (patched !== mProp) propsChanged = true;
+			} else {
+				newProps[key] = mProp;
+			}
+		}
+
+		if (propsChanged) {
+			result.properties = newProps;
+			changed = true;
+		}
+	}
+
+	// ── Recurse into items (single schema) ──
+	if (isPlainObj(result.items) && isPlainObj(a.items) && isPlainObj(b.items)) {
+		const patched = applyConstraintsMerge(
+			result.items as JSONSchema7Definition,
+			a.items as JSONSchema7Definition,
+			b.items as JSONSchema7Definition,
+		);
+		if (patched !== result.items) {
+			result.items = patched;
+			changed = true;
+		}
+	}
+
+	// ── Recurse into patternProperties ──
+	if (
+		isPlainObj(result.patternProperties) &&
+		(isPlainObj(a.patternProperties) || isPlainObj(b.patternProperties))
+	) {
+		const mergedPP = result.patternProperties as Record<
+			string,
+			JSONSchema7Definition
+		>;
+		const aPP = (a.patternProperties ?? {}) as Record<
+			string,
+			JSONSchema7Definition
+		>;
+		const bPP = (b.patternProperties ?? {}) as Record<
+			string,
+			JSONSchema7Definition
+		>;
+
+		let ppChanged = false;
+		const newPP: Record<string, JSONSchema7Definition> = {};
+
+		for (const key of Object.keys(mergedPP)) {
+			const mVal = mergedPP[key];
+			const aVal = aPP[key];
+			const bVal = bPP[key];
+
+			if (mVal === undefined) continue;
+
+			if (
+				aVal !== undefined &&
+				bVal !== undefined &&
+				typeof mVal !== "boolean" &&
+				typeof aVal !== "boolean" &&
+				typeof bVal !== "boolean"
+			) {
+				const patched = applyConstraintsMerge(mVal, aVal, bVal);
+				newPP[key] = patched;
+				if (patched !== mVal) ppChanged = true;
+			} else {
+				newPP[key] = mVal;
+			}
+		}
+
+		if (ppChanged) {
+			result.patternProperties = newPP;
+			changed = true;
+		}
+	}
+
+	// ── Recurse into tuple items (array of schemas) ──
+	if (
+		Array.isArray(result.items) &&
+		Array.isArray(a.items) &&
+		Array.isArray(b.items)
+	) {
+		const mergedItems = result.items as JSONSchema7Definition[];
+		const aItems = a.items as JSONSchema7Definition[];
+		const bItems = b.items as JSONSchema7Definition[];
+		const len = mergedItems.length;
+
+		let tupleChanged = false;
+		const newItems: JSONSchema7Definition[] = new Array(len);
+
+		for (let i = 0; i < len; i++) {
+			const mItem = mergedItems[i];
+			const aItem = aItems[i];
+			const bItem = bItems[i];
+
+			if (
+				mItem !== undefined &&
+				aItem !== undefined &&
+				bItem !== undefined &&
+				typeof mItem !== "boolean" &&
+				typeof aItem !== "boolean" &&
+				typeof bItem !== "boolean"
+			) {
+				const patched = applyConstraintsMerge(mItem, aItem, bItem);
+				newItems[i] = patched;
+				if (patched !== mItem) tupleChanged = true;
+			} else {
+				newItems[i] = mItem as JSONSchema7Definition;
+			}
+		}
+
+		if (tupleChanged) {
+			result.items = newItems;
+			changed = true;
+		}
+	}
+
+	// ── Recurse into additionalProperties (schema form) ──
+	if (
+		isPlainObj(result.additionalProperties) &&
+		isPlainObj(a.additionalProperties) &&
+		isPlainObj(b.additionalProperties)
+	) {
+		const patched = applyConstraintsMerge(
+			result.additionalProperties as JSONSchema7Definition,
+			a.additionalProperties as JSONSchema7Definition,
+			b.additionalProperties as JSONSchema7Definition,
+		);
+		if (patched !== result.additionalProperties) {
+			result.additionalProperties = patched;
+			changed = true;
+		}
+	}
+
+	// ── Recurse into dependencies (schema form) ──
+	if (
+		isPlainObj(result.dependencies) &&
+		(isPlainObj(a.dependencies) || isPlainObj(b.dependencies))
+	) {
+		const mergedDeps = result.dependencies as Record<
+			string,
+			JSONSchema7Definition | string[]
+		>;
+		const aDeps = (a.dependencies ?? {}) as Record<
+			string,
+			JSONSchema7Definition | string[]
+		>;
+		const bDeps = (b.dependencies ?? {}) as Record<
+			string,
+			JSONSchema7Definition | string[]
+		>;
+
+		let depsChanged = false;
+		const newDeps: Record<string, JSONSchema7Definition | string[]> = {};
+
+		for (const key of Object.keys(mergedDeps)) {
+			const mVal = mergedDeps[key];
+			const aVal = aDeps[key];
+			const bVal = bDeps[key];
+
+			if (mVal === undefined) continue;
+
+			// Only recurse for schema-form dependencies (not string-array form)
+			if (
+				aVal !== undefined &&
+				bVal !== undefined &&
+				!Array.isArray(mVal) &&
+				!Array.isArray(aVal) &&
+				!Array.isArray(bVal) &&
+				typeof mVal !== "boolean" &&
+				typeof aVal !== "boolean" &&
+				typeof bVal !== "boolean"
+			) {
+				const patched = applyConstraintsMerge(
+					mVal as JSONSchema7Definition,
+					aVal as JSONSchema7Definition,
+					bVal as JSONSchema7Definition,
+				);
+				newDeps[key] = patched;
+				if (patched !== mVal) depsChanged = true;
+			} else {
+				newDeps[key] = mVal;
+			}
+		}
+
+		if (depsChanged) {
+			result.dependencies = newDeps;
+			changed = true;
+		}
+	}
+
+	return changed ? result : merged;
 }
 
 // ─── MergeEngine class ───────────────────────────────────────────────────────
@@ -476,86 +836,107 @@ export class MergeEngine {
 	}
 
 	/**
-	 * Merge deux schemas via `allOf([a, b])`.
-	 * Retourne `null` si les schemas sont incompatibles.
+	 * Merges two schemas via `allOf([a, b])`.
+	 * Returns `null` if the schemas are incompatible.
 	 *
-	 * Post-merge : détecte les conflits de `const` que la librairie
-	 * ne capture pas (elle utilise `identity` pour `const`).
+	 * Post-merge: detects `const` conflicts that the library
+	 * does not capture (it uses `identity` for `const`).
 	 */
 	merge(
 		a: JSONSchema7Definition,
 		b: JSONSchema7Definition,
 	): JSONSchema7Definition | null {
-		// Pré-check : conflit de const détectable avant le merge
+		// ── Trivial fast paths ──
+		// Avoid expensive recursive conflict checks and external merge calls
+		// for the most common identity/boolean intersection cases.
+		if (a === b) return a;
+		if (a === false || b === false) return false;
+		if (a === true) return b;
+		if (b === true) return a;
+
+		// Pre-check: const conflict detectable before the merge
 		if (hasDeepConstConflict(a, b)) {
 			return null;
 		}
 
-		// Pré-check : conflit de format (les DEUX ont un format incompatible)
+		// Pre-check: format conflict (BOTH have an incompatible format)
 		if (hasFormatConflict(a, b)) {
 			return null;
 		}
 
-		// Pré-check : conflit additionalProperties vs propriétés REQUISES extra
-		// Ne détecte que les cas où une propriété est à la fois interdite
-		// (additionalProperties: false) et requise (required) → intersection vide.
-		// Les cas où les propriétés sont simplement définies sans être requises
-		// sont gérés correctement par la librairie de merge elle-même.
+		// Pre-check: additionalProperties vs extra REQUIRED properties conflict
+		// Only detects cases where a property is simultaneously forbidden
+		// (additionalProperties: false) and required (required) → empty intersection.
+		// Cases where properties are merely defined without being required
+		// are handled correctly by the merge library itself.
 		if (hasAdditionalPropertiesConflict(a, b)) {
 			return null;
 		}
 
 		try {
-			return this.shallowAllOfMergeFn({ allOf: [a, b] });
+			const result = this.shallowAllOfMergeFn({ allOf: [a, b] });
+			// Post-merge: the external library does not handle our custom
+			// `constraints` keyword — apply union + deduplication.
+			return applyConstraintsMerge(result, a, b);
 		} catch {
 			return null;
 		}
 	}
 
 	/**
-	 * Merge via `shallowAllOfMerge` — lève une exception si incompatible.
-	 * Utile quand on veut capturer l'erreur pour le diagnostic.
+	 * Merges via `shallowAllOfMerge` — throws an exception if incompatible.
+	 * Useful when you want to capture the error for diagnostics.
 	 *
-	 * Post-merge : détecte les conflits de `const` et lève une exception.
+	 * Post-merge: detects `const` conflicts and throws an exception.
 	 */
 	mergeOrThrow(
 		a: JSONSchema7Definition,
 		b: JSONSchema7Definition,
 	): JSONSchema7Definition {
-		// Pré-check : conflit de const
+		// ── Trivial fast paths ──
+		// Keep mergeOrThrow aligned with merge() for the common boolean/identity
+		// intersections that can be resolved without touching the merge library.
+		if (a === b) return a;
+		if (a === false || b === false) return false;
+		if (a === true) return b;
+		if (b === true) return a;
+
+		// Pre-check: const conflict
 		if (hasDeepConstConflict(a, b)) {
 			throw new Error(
 				"Incompatible const values: schemas have conflicting const constraints",
 			);
 		}
 
-		// Pré-check : conflit de format
+		// Pre-check: format conflict
 		if (hasFormatConflict(a, b)) {
 			throw new Error(
 				"Incompatible format values: schemas have conflicting format constraints",
 			);
 		}
 
-		// Pré-check : conflit additionalProperties vs propriétés REQUISES extra
+		// Pre-check: additionalProperties vs extra REQUIRED properties conflict
 		if (hasAdditionalPropertiesConflict(a, b)) {
 			throw new Error(
 				"Incompatible additionalProperties: required properties conflict with additionalProperties constraint",
 			);
 		}
 
-		return this.shallowAllOfMergeFn({ allOf: [a, b] });
+		const result = this.shallowAllOfMergeFn({ allOf: [a, b] });
+		// Post-merge: apply constraints union + deduplication.
+		return applyConstraintsMerge(result, a, b);
 	}
 
 	/**
-	 * Compare structurellement deux schema definitions.
-	 * Retourne 0 si elles sont identiques, sinon un entier non nul.
+	 * Structurally compares two schema definitions.
+	 * Returns 0 if they are identical, otherwise a non-zero integer.
 	 */
 	compare(a: JSONSchema7Definition, b: JSONSchema7Definition): number {
 		return this.compareFn(a, b);
 	}
 
 	/**
-	 * Vérifie l'égalité structurelle entre deux schema definitions.
+	 * Checks structural equality between two schema definitions.
 	 */
 	isEqual(a: JSONSchema7Definition, b: JSONSchema7Definition): boolean {
 		return this.compareFn(a, b) === 0;

@@ -53,14 +53,14 @@ describe("Point 7 — not reasoning", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Amélioration 1 — `not` : support étendu (evaluateNot)
+//  Enhancement 1 — `not`: extended support (evaluateNot)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Amélioration 1 — evaluateNot étendu", () => {
-	// ── 1.1 — not avec properties + required ──────────────────────────────
+describe("Enhancement 1 — extended evaluateNot", () => {
+	// ── 1.1 — not with properties + required ──────────────────────────────
 
-	describe("1.1 — not avec properties + required", () => {
-		test("sub avec const incompatible avec not.properties.const → compatible", () => {
+	describe("1.1 — not with properties + required", () => {
+		test("sub with const incompatible with not.properties.const → compatible", () => {
 			const sub: JSONSchema7 = {
 				type: "object",
 				properties: { status: { const: "inactive" } },
@@ -73,11 +73,11 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 					required: ["status"],
 				},
 			};
-			// sub a status="inactive", not exclut status="active" → compatible
+			// sub has status="inactive", not excludes status="active" → compatible
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 
-		test("sub avec const identique à not.properties.const → incompatible", () => {
+		test("sub with const identical to not.properties.const → incompatible", () => {
 			const sub: JSONSchema7 = {
 				type: "object",
 				properties: { status: { const: "active" } },
@@ -90,7 +90,7 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 					required: ["status"],
 				},
 			};
-			// sub a exactement status="active" → incompatible avec not
+			// sub has exactly status="active" → incompatible with not
 			expect(checker.isSubset(sub, sup)).toBe(false);
 		});
 
@@ -107,7 +107,7 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 					required: ["role"],
 				},
 			};
-			// "viewer" n'est pas dans ["admin", "superadmin"] → compatible
+			// "viewer" is not in ["admin", "superadmin"] → compatible
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 
@@ -124,11 +124,11 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 					required: ["role"],
 				},
 			};
-			// "admin" est dans ["admin", "superadmin"] → incompatible
+			// "admin" is in ["admin", "superadmin"] → incompatible
 			expect(checker.isSubset(sub, sup)).toBe(false);
 		});
 
-		test("sub ne requiert pas la propriété du not.required → compatible", () => {
+		test("sub does not require the not.required property → compatible", () => {
 			const sub: JSONSchema7 = {
 				type: "object",
 				properties: { name: { type: "string" } },
@@ -141,12 +141,12 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 					required: ["status"],
 				},
 			};
-			// sub n'a pas "status" du tout (ni dans required ni dans properties)
-			// → le not schema ne matcherait jamais → compatible
+			// sub does not have "status" at all (neither in required nor in properties)
+			// → the not schema would never match → compatible
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 
-		test("Test D — not avec properties complexes (rôle viewer ⊆ not admin/superadmin)", () => {
+		test("Test D — not with complex properties (role viewer ⊆ not admin/superadmin)", () => {
 			const sub: JSONSchema7 = {
 				type: "object",
 				properties: {
@@ -164,7 +164,7 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 					required: ["role"],
 				},
 			};
-			// "viewer" n'est pas dans ["admin", "superadmin"] → sub ⊆ sup
+			// "viewer" is not in ["admin", "superadmin"] → sub ⊆ sup
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 	});
@@ -179,7 +179,7 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 					anyOf: [{ type: "string" }, { type: "null" }],
 				},
 			};
-			// number n'est ni string ni null → compatible
+			// number is neither string nor null → compatible
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 
@@ -190,7 +190,7 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 					anyOf: [{ type: "string" }, { type: "null" }],
 				},
 			};
-			// string matche la première branche du not.anyOf → incompatible
+			// string matches the first branch of not.anyOf → incompatible
 			expect(checker.isSubset(sub, sup)).toBe(false);
 		});
 
@@ -201,7 +201,7 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 					oneOf: [{ type: "string" }, { type: "number" }],
 				},
 			};
-			// boolean n'est ni string ni number → compatible
+			// boolean is neither string nor number → compatible
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 
@@ -212,7 +212,7 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 					oneOf: [{ type: "string" }, { type: "number" }],
 				},
 			};
-			// number matche une branche du not.oneOf → incompatible
+			// number matches a branch of not.oneOf → incompatible
 			expect(checker.isSubset(sub, sup)).toBe(false);
 		});
 	});
@@ -220,15 +220,15 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 	// ── 1.3 — not dans sub (pas seulement dans sup) ──────────────────────
 
 	describe("1.3 — not dans sub", () => {
-		test("sub avec not ⊄ sup concret (trop large)", () => {
+		test("sub with not ⊄ concrete sup (too broad)", () => {
 			const sub: JSONSchema7 = { not: { type: "string" } };
 			const sup: JSONSchema7 = { type: "number" };
-			// sub accepte tout sauf string (boolean, object, array, null, number...)
-			// sup accepte uniquement number → sub ⊄ sup
+			// sub accepts everything except string (boolean, object, array, null, number...)
+			// sup accepts only number → sub ⊄ sup
 			expect(checker.isSubset(sub, sup)).toBe(false);
 		});
 
-		test("sub avec not ⊆ sup avec même not (identité — déjà géré)", () => {
+		test("sub with not ⊆ sup with same not (identity — already handled)", () => {
 			const sub: JSONSchema7 = { not: { type: "string" } };
 			const sup: JSONSchema7 = { not: { type: "string" } };
 			expect(checker.isSubset(sub, sup)).toBe(true);
@@ -237,15 +237,15 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 		test("sub concret ⊆ sup avec not compatible (number ⊆ not string)", () => {
 			const sub: JSONSchema7 = { type: "number" };
 			const sup: JSONSchema7 = { not: { type: "string" } };
-			// number ⊆ tout-sauf-string → true
+			// number ⊆ everything-except-string → true
 			expect(checker.isSubset(sub, sup)).toBe(true);
 		});
 	});
 
-	// ── 1.4 — Double négation (normalizer) ────────────────────────────────
+	// ── 1.4 — Double negation (normalizer) ────────────────────────────────
 
-	describe("1.4 — double négation not(not(X))", () => {
-		test("not(not({ type: string })) normalise en { type: string }", () => {
+	describe("1.4 — double negation not(not(X))", () => {
+		test("not(not({ type: string })) normalizes to { type: string }", () => {
 			const schema: JSONSchema7 = {
 				not: { not: { type: "string" } },
 			};
@@ -279,7 +279,7 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 	// ── not.format ─────────────────────────────────────────────────────────
 
 	describe("not.format", () => {
-		test("sub format=ipv4 vs not format=email → compatible (formats différents)", () => {
+		test("sub format=ipv4 vs not format=email → compatible (different formats)", () => {
 			const sub: JSONSchema7 = { type: "string", format: "ipv4" };
 			const sup: JSONSchema7 = { not: { format: "email" } };
 			expect(checker.isSubset(sub, sup)).toBe(true);
@@ -292,9 +292,9 @@ describe("Amélioration 1 — evaluateNot étendu", () => {
 		});
 	});
 
-	// ── Test A — not + additionalProperties (intégration) ──────────────────
+	// ── Test A — not + additionalProperties (integration) ──────────────────
 
-	test("Test A — not + additionalProperties intégration", () => {
+	test("Test A — not + additionalProperties integration", () => {
 		const source: JSONSchema7 = {
 			type: "object",
 			properties: {

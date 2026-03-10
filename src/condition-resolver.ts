@@ -1,43 +1,45 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
-import { validateFormat } from "./format-validator";
-import type { MergeEngine } from "./merge-engine";
-import { inferType } from "./normalizer";
-import type { ResolvedConditionResult } from "./types";
-import { deepEqual, hasOwn, isPlainObj, omitKeys, unionStrings } from "./utils";
+import type { MergeEngine } from "./merge-engine.ts";
+import { isDataValidForSchema } from "./runtime-validator.ts";
+import type { ResolvedConditionResult } from "./types.ts";
+import {
+	deepEqual,
+	hasOwn,
+	isPlainObj,
+	mergeConstraints,
+	omitKeys,
+	unionStrings,
+} from "./utils.ts";
 
 // ─── Condition Resolver ──────────────────────────────────────────────────────
 //
-// Résout les `if/then/else` d'un schema en évaluant le `if` contre
-// des données partielles (discriminants).
+// Resolves `if/then/else` in a schema by evaluating the `if` against
+// partial data (discriminants).
 //
-// Stratégie :
-//  1. Évaluer si les données partielles satisfont le `if`
-//  2. Merger la branche applicable (`then` ou `else`) dans le schema de base
-//  3. Supprimer les mots-clés `if/then/else` du résultat
-//  4. Récurser dans les `properties` pour résoudre les conditions imbriquées
+// Strategy:
+//  1. Evaluate whether partial data satisfies the `if`
+//  2. Merge the applicable branch (`then` or `else`) into the base schema
+//  3. Remove the `if/then/else` keywords from the result
+//  4. Recurse into `properties` to resolve nested conditions
 //
-// L'évaluation du `if` (via `evaluateCondition`) gère :
-//   - `properties` avec `const`, `enum`, `type`, contraintes numériques/string/array
-//   - `required` (vérification de présence des clés)
-//   - `allOf` (toutes les entrées doivent matcher — récursion) [2.1]
-//   - `anyOf` (au moins une entrée doit matcher — récursion) [2.2]
-//   - `oneOf` (exactement une entrée doit matcher — récursion) [2.3]
-//   - `not` (inversion du résultat — récursion) [2.4]
-//   - Propriétés imbriquées (nested objects — récursion) [2.5]
-//   - `format` via `validateFormat` de `format-validator.ts` [2.6]
+// The `if` evaluation relies on a shared runtime validator
+// to avoid duplicating partial validation logic.
+// The resolver continues to orchestrate:
+//   - evaluation of `if/then/else` branches
+//   - merging the applicable branch
+//   - recursive resolution of nested properties
 //
 // Uses custom utilities from `utils.ts`:
 //   - `hasOwn` / `isPlainObj`   for safe property access and type checks
-//   - `deepEqual`               for deep structural comparison
 //   - `unionStrings`            for merging string arrays (required, deps)
 //   - `omitKeys`                for excluding keys from objects
 
 // ─── Keywords classification ─────────────────────────────────────────────────
 
-/** Mots-clés qui ne doivent pas être traités par la boucle générique de mergeBranchInto */
+/** Keywords that must not be processed by the generic loop in mergeBranchInto */
 const SPECIAL_MERGE_KEYS = new Set(["required", "properties", "dependencies"]);
 
-/** Mots-clés contenant un sous-schema unique (mergeable via engine.merge) */
+/** Keywords containing a single sub-schema (mergeable via engine.merge) */
 const SUB_SCHEMA_KEYS = new Set([
 	"additionalProperties",
 	"items",
@@ -46,7 +48,7 @@ const SUB_SCHEMA_KEYS = new Set([
 	"not",
 ]);
 
-/** Mots-clés numériques de type "minimum" (prendre le max pour être plus restrictif) */
+/** Numeric keywords of "minimum" type (take the max to be more restrictive) */
 const MIN_KEYS = new Set([
 	"minimum",
 	"exclusiveMinimum",
@@ -55,7 +57,7 @@ const MIN_KEYS = new Set([
 	"minProperties",
 ]);
 
-/** Mots-clés numériques de type "maximum" (prendre le min pour être plus restrictif) */
+/** Numeric keywords of "maximum" type (take the min to be more restrictive) */
 const MAX_KEYS = new Set([
 	"maximum",
 	"exclusiveMaximum",
@@ -67,256 +69,26 @@ const MAX_KEYS = new Set([
 // ─── Condition evaluation (internal) ─────────────────────────────────────────
 
 /**
- * Vérifie si `value` correspond à un type JSON Schema.
- */
-function matchesType(value: unknown, type: JSONSchema7["type"]): boolean {
-	if (type === undefined) return true;
-
-	const types = Array.isArray(type) ? type : [type];
-	const actualType = inferType(value);
-
-	return types.some(
-		(t) => t === actualType || (t === "number" && actualType === "integer"),
-	);
-}
-
-/**
- * Évalue une contrainte numérique sur une valeur.
- * Point 5 — Enrichissement de evaluateCondition.
- */
-function evaluateNumericConstraints(value: number, prop: JSONSchema7): boolean {
-	if (prop.minimum !== undefined && !(value >= prop.minimum)) return false;
-	if (prop.maximum !== undefined && !(value <= prop.maximum)) return false;
-	if (
-		prop.exclusiveMinimum !== undefined &&
-		!(value > (prop.exclusiveMinimum as number))
-	)
-		return false;
-	if (
-		prop.exclusiveMaximum !== undefined &&
-		!(value < (prop.exclusiveMaximum as number))
-	)
-		return false;
-	if (prop.multipleOf !== undefined && value % prop.multipleOf !== 0)
-		return false;
-	return true;
-}
-
-/**
- * Évalue une contrainte string sur une valeur.
- * Point 5 — Enrichissement de evaluateCondition.
- */
-/** Cache for compiled RegExp patterns used in evaluateStringConstraints */
-const patternRegexCache = new Map<string, RegExp>();
-
-function getOrCompileRegex(pattern: string): RegExp {
-	let regex = patternRegexCache.get(pattern);
-	if (regex === undefined) {
-		regex = new RegExp(pattern);
-		patternRegexCache.set(pattern, regex);
-	}
-	return regex;
-}
-
-function evaluateStringConstraints(value: string, prop: JSONSchema7): boolean {
-	if (prop.minLength !== undefined && !(value.length >= prop.minLength))
-		return false;
-	if (prop.maxLength !== undefined && !(value.length <= prop.maxLength))
-		return false;
-	if (
-		prop.pattern !== undefined &&
-		!getOrCompileRegex(prop.pattern).test(value)
-	)
-		return false;
-	return true;
-}
-
-/**
- * Évalue une contrainte array sur une valeur.
- * Point 5 — Enrichissement de evaluateCondition.
- */
-function evaluateArrayConstraints(
-	value: unknown[],
-	prop: JSONSchema7,
-): boolean {
-	if (prop.minItems !== undefined && !(value.length >= prop.minItems))
-		return false;
-	if (prop.maxItems !== undefined && !(value.length <= prop.maxItems))
-		return false;
-	if (prop.uniqueItems === true) {
-		// Vérifier l'unicité via deepEqual pour les éléments non-primitifs
-		// Optimisation : double boucle sans slice pour éviter les allocations
-		const len = value.length;
-		for (let i = 0; i < len; i++) {
-			for (let j = i + 1; j < len; j++) {
-				if (deepEqual(value[i], value[j])) return false;
-			}
-		}
-	}
-	return true;
-}
-
-/**
- * Évalue si des données partielles satisfont un `if` schema.
+ * Evaluates whether partial data satisfies an `if` schema.
  *
- * Stratégie pragmatique (pas un validateur complet) :
- *  - Vérifie les `properties` avec `const`, `enum`, `type`
- *  - Point 5 : Vérifie aussi minimum/maximum, minLength/maxLength,
- *    pattern, multipleOf, minItems/maxItems, uniqueItems
- *  - Vérifie les `required`
- *  - 2.1 : `allOf` → toutes les entrées doivent matcher (récursion)
- *  - 2.2 : `anyOf` → au moins une entrée doit matcher (récursion)
- *  - 2.3 : `oneOf` → exactement une entrée doit matcher (récursion)
- *  - 2.4 : `not` → inversion du résultat (récursion)
- *  - 2.5 : Propriétés imbriquées → récursion sur les sous-objets
- *  - 2.6 : `format` → validation via `validateFormat`
- *
- * Utilise `_.forEach` / `_.every` / `_.has` pour une itération idiomatique.
+ * This version delegates runtime validation to the shared validator.
+ * Only the resolver semantics are kept here:
+ * if the data matches the `if`, apply `then`, otherwise `else`.
  */
 function evaluateCondition(
 	ifSchema: JSONSchema7,
 	data: Record<string, unknown>,
 ): boolean {
-	if (isPlainObj(ifSchema.properties)) {
-		const propsOk = Object.keys(ifSchema.properties).every((key) => {
-			const propDef = ifSchema.properties?.[key];
-			if (typeof propDef === "boolean") return true;
-			const prop = propDef as JSONSchema7;
-			const value = data[key];
-
-			// ── Propriété absente → skip ──
-			// Selon la spec JSON Schema Draft-07, le keyword `properties` ne valide
-			// une propriété que si elle est **présente** dans l'instance.
-			// C'est le keyword `required` qui gère la présence obligatoire.
-			if (value === undefined) return true;
-
-			// ── const ──
-			if (hasOwn(prop, "const")) {
-				if (!deepEqual(value, prop.const)) return false;
-			}
-
-			// ── enum ──
-			if (hasOwn(prop, "enum")) {
-				if (!prop.enum?.some((v) => deepEqual(v, value))) return false;
-			}
-
-			// ── type ──
-			if (hasOwn(prop, "type") && value !== undefined) {
-				if (!matchesType(value, prop.type)) return false;
-			}
-
-			// ── Point 5 : Contraintes numériques/string/array ──
-			// Quand `value` est `undefined`, aucun de ces blocs ne s'exécute
-			// (`typeof undefined` vaut `"undefined"`, pas `"number"` ni `"string"`,
-			// et `isArray(undefined)` retourne `false`).
-			// C'est le comportement voulu : on ne peut pas évaluer une contrainte
-			// sur une donnée absente → on skip, cohérent avec la logique pragmatique.
-			if (typeof value === "number") {
-				if (!evaluateNumericConstraints(value, prop)) return false;
-			}
-
-			if (typeof value === "string") {
-				if (!evaluateStringConstraints(value, prop)) return false;
-			}
-
-			if (Array.isArray(value)) {
-				if (!evaluateArrayConstraints(value as unknown[], prop)) return false;
-			}
-
-			// ── 2.6 — format ──
-			// Valide la valeur contre le format via class-validator.
-			// Le format ne s'applique qu'aux strings en Draft-07.
-			// Si le format est inconnu → skip (retourne null → on continue).
-			if (prop.format !== undefined && typeof value === "string") {
-				const formatResult = validateFormat(value, prop.format);
-				if (formatResult === false) return false;
-				// null (format inconnu) → skip, cohérent avec l'approche pragmatique
-			}
-
-			// ── 2.5 — Propriétés imbriquées (nested objects) ──
-			// Si la propriété elle-même a des `properties` ou un `required`,
-			// et que la valeur dans data est un objet, récurser dans evaluateCondition
-			// en passant la sous-donnée comme nouveau `data`.
-			// Si data[key] n'est pas un objet, on skip (retourne true pour cette prop,
-			// cohérent avec "absence = pas de contrainte").
-			if (isPlainObj(prop.properties) || Array.isArray(prop.required)) {
-				if (isPlainObj(value)) {
-					if (!evaluateCondition(prop, value as Record<string, unknown>)) {
-						return false;
-					}
-				}
-				// value n'est pas un objet → skip, on ne peut pas évaluer les sous-props
-			}
-
-			return true;
-		});
-		if (!propsOk) return false;
-	}
-
-	// ── required ──
-	if (Array.isArray(ifSchema.required)) {
-		const allRequired = ifSchema.required.every((key) =>
-			hasOwn(data, key as string),
-		);
-		if (!allRequired) return false;
-	}
-
-	// ── 2.1 — allOf ──
-	// Toutes les entrées du allOf doivent matcher (évaluation récursive).
-	if (Array.isArray(ifSchema.allOf)) {
-		const allMatch = ifSchema.allOf.every((entry) => {
-			if (typeof entry === "boolean") return entry;
-			return evaluateCondition(entry as JSONSchema7, data);
-		});
-		if (!allMatch) return false;
-	}
-
-	// ── 2.2 — anyOf ──
-	// Au moins une entrée du anyOf doit matcher (évaluation récursive).
-	if (Array.isArray(ifSchema.anyOf)) {
-		const anyMatch = ifSchema.anyOf.some((entry) => {
-			if (typeof entry === "boolean") return entry;
-			return evaluateCondition(entry as JSONSchema7, data);
-		});
-		if (!anyMatch) return false;
-	}
-
-	// ── 2.3 — oneOf ──
-	// Exactement une entrée du oneOf doit matcher (évaluation récursive).
-	if (Array.isArray(ifSchema.oneOf)) {
-		let matchCount = 0;
-		for (const entry of ifSchema.oneOf) {
-			const matches =
-				typeof entry === "boolean"
-					? entry
-					: evaluateCondition(entry as JSONSchema7, data);
-			if (matches) matchCount++;
-			if (matchCount > 1) break;
-		}
-		if (matchCount !== 1) return false;
-	}
-
-	// ── 2.4 — not ──
-	// Inverser le résultat de l'évaluation du contenu du `not`.
-	if (
-		hasOwn(ifSchema, "not") &&
-		isPlainObj(ifSchema.not) &&
-		typeof ifSchema.not !== "boolean"
-	) {
-		const notResult = evaluateCondition(ifSchema.not as JSONSchema7, data);
-		if (notResult) return false; // Le not matche → la condition not ne matche pas
-	}
-
-	return true;
+	return isDataValidForSchema(ifSchema, data);
 }
 
 // ─── Discriminant extraction ─────────────────────────────────────────────────
 
 /**
- * Mots-clés qui indiquent qu'une propriété est un discriminant
- * (sa valeur dans les données est utilisée pour la résolution).
+ * Keywords that indicate a property is a discriminant
+ * (its value in the data is used for resolution).
  *
- * Point 5 — Étendu avec les contraintes numériques/string/pattern.
+ * Point 5 — Extended with numeric/string/pattern constraints.
  */
 const DISCRIMINANT_INDICATORS = [
 	"const",
@@ -335,14 +107,10 @@ const DISCRIMINANT_INDICATORS = [
 ] as const;
 
 /**
- * Extrait les valeurs discriminantes utilisées dans un `if` schema
- * depuis les données partielles.
+ * Extracts discriminant values used in an `if` schema from partial data.
  *
- * Point 5 — Collecte aussi les discriminants pour les nouvelles contraintes
+ * Point 5 — Also collects discriminants for new constraints
  * (minimum, maximum, pattern, etc.).
- *
- * Utilise `_.some` pour vérifier qu'au moins un indicateur est présent,
- * et `_.has` pour un accès sûr.
  */
 function extractDiscriminants(
 	ifSchema: JSONSchema7,
@@ -357,7 +125,7 @@ function extractDiscriminants(
 		if (typeof propDef === "boolean") continue;
 		const prop = propDef as JSONSchema7;
 
-		// Collecter si au moins un indicateur de discriminant est présent
+		// Collect if at least one discriminant indicator is present
 		const hasIndicator = DISCRIMINANT_INDICATORS.some((indicator) =>
 			hasOwn(prop, indicator),
 		);
@@ -371,22 +139,21 @@ function extractDiscriminants(
 // ─── Branch merging (deduplicated) ───────────────────────────────────────────
 
 /**
- * Merge une branche conditionnelle (`then` ou `else`) dans le schema résolu.
+ * Merges a conditional branch (`then` or `else`) into the resolved schema.
  *
- * Point 4 — Fix first-writer-wins :
- *   Au lieu d'ignorer les keywords déjà présents dans `resolved`,
- *   on tente un merge intelligent selon le type de keyword :
+ * Point 4 — Fix first-writer-wins:
+ *   Instead of ignoring keywords already present in `resolved`,
+ *   attempts a smart merge depending on the keyword type:
  *
- *   - `required` → union dédupliquée via `_.union`
- *   - `properties` → merge individuel via engine.merge
- *   - `dependencies` → Point 3 : union des tableaux (forme 1),
- *      merge des schemas (forme 2) via `_.mapValues`
+ *   - `properties` → individual merge via engine.merge
+ *   - `dependencies` → Point 3: union of arrays (form 1),
+ *      merge of schemas (form 2)
  *   - Sub-schema keys → merge via engine.merge
- *   - Min keys → `Math.max` (plus restrictif)
- *   - Max keys → `Math.min` (plus restrictif)
- *   - `uniqueItems` → `true` gagne sur `false`
- *   - `pattern` / `format` → la branche gagne (plus spécifique)
- *   - Autres → tentative de merge via engine, sinon la branche gagne
+ *   - Min keys → `Math.max` (more restrictive)
+ *   - Max keys → `Math.min` (more restrictive)
+ *   - `uniqueItems` → `true` wins over `false`
+ *   - `pattern` / `format` → branch wins (more context-specific)
+ *   - Others → attempt merge via engine, otherwise branch wins
  *
  * Uses custom utilities from `utils.ts` for each merge operation.
  */
@@ -407,7 +174,7 @@ function mergeBranchInto(
 		);
 	}
 
-	// ── Merger properties ──
+	// ── Merge properties ──
 	if (isPlainObj(branchSchema.properties)) {
 		const branchProps = branchSchema.properties as Record<
 			string,
@@ -437,7 +204,7 @@ function mergeBranchInto(
 		resolved.properties = mergedProps;
 	}
 
-	// ── Merger dependencies (Point 3) ──
+	// ── Merge dependencies (Point 3) ──
 	if (isPlainObj(branchSchema.dependencies)) {
 		const resolvedDeps = (resolved.dependencies ?? {}) as Record<
 			string,
@@ -461,23 +228,23 @@ function mergeBranchInto(
 				| undefined;
 
 			if (existingVal === undefined) {
-				// Pas de valeur existante → copier directement
+				// No existing value → copy directly
 				acc[depKey] = branchVal;
 			} else if (Array.isArray(existingVal) && Array.isArray(branchVal)) {
-				// Forme 1 : union dédupliquée des tableaux de strings
+				// Form 1: deduplicated union of string arrays
 				acc[depKey] = unionStrings(
 					existingVal as string[],
 					branchVal as string[],
 				);
 			} else if (isPlainObj(existingVal) && isPlainObj(branchVal)) {
-				// Forme 2 : merge des sous-schemas
+				// Form 2: merge sub-schemas
 				const merged = engine.merge(
 					existingVal as JSONSchema7Definition,
 					branchVal as JSONSchema7Definition,
 				);
 				acc[depKey] = (merged ?? branchVal) as JSONSchema7Definition;
 			} else {
-				// Types incompatibles (tableau vs schema) → la branche gagne
+				// Incompatible types (array vs schema) → branch wins
 				acc[depKey] = branchVal;
 			}
 		}
@@ -487,22 +254,22 @@ function mergeBranchInto(
 		>;
 	}
 
-	// ── Merger les autres mots-clés (Point 4 — fix first-writer-wins) ──
+	// ── Merge remaining keywords (Point 4 — fix first-writer-wins) ──
 	for (const key of Object.keys(branchSchema) as (keyof JSONSchema7)[]) {
-		// Skip les clés déjà traitées ci-dessus
-		if (SPECIAL_MERGE_KEYS.has(key)) return;
+		// Skip keys already handled above
+		if (SPECIAL_MERGE_KEYS.has(key)) continue;
 
 		const branchVal = branchSchema[key];
 		const resolvedVal = resolved[key];
 
-		// Si le resolved n'a pas cette clé → copier directement
+		// If resolved doesn't have this key → copy directly
 		if (resolvedVal === undefined) {
 			(resolved as Record<string, unknown>)[key] = branchVal;
-			return;
+			continue;
 		}
 
-		// Si les deux ont la même valeur → rien à faire
-		if (deepEqual(resolvedVal, branchVal)) return;
+		// If both have the same value → nothing to do
+		if (deepEqual(resolvedVal, branchVal)) continue;
 
 		// ── Sub-schema keys → merge via engine ──
 		if (SUB_SCHEMA_KEYS.has(key)) {
@@ -513,13 +280,13 @@ function mergeBranchInto(
 			if (merged !== null) {
 				(resolved as Record<string, unknown>)[key] = merged;
 			} else {
-				// Merge impossible → la branche gagne (contexte conditionnel)
+				// Merge impossible → branch wins (conditional context)
 				(resolved as Record<string, unknown>)[key] = branchVal;
 			}
-			return;
+			continue;
 		}
 
-		// ── Min keys → Math.max (plus restrictif) ──
+		// ── Min keys → Math.max (more restrictive) ──
 		if (MIN_KEYS.has(key)) {
 			if (typeof resolvedVal === "number" && typeof branchVal === "number") {
 				(resolved as Record<string, unknown>)[key] = Math.max(
@@ -529,10 +296,10 @@ function mergeBranchInto(
 			} else {
 				(resolved as Record<string, unknown>)[key] = branchVal;
 			}
-			return;
+			continue;
 		}
 
-		// ── Max keys → Math.min (plus restrictif) ──
+		// ── Max keys → Math.min (more restrictive) ──
 		if (MAX_KEYS.has(key)) {
 			if (typeof resolvedVal === "number" && typeof branchVal === "number") {
 				(resolved as Record<string, unknown>)[key] = Math.min(
@@ -542,23 +309,35 @@ function mergeBranchInto(
 			} else {
 				(resolved as Record<string, unknown>)[key] = branchVal;
 			}
-			return;
+			continue;
 		}
 
-		// ── uniqueItems → true gagne sur false ──
+		// ── uniqueItems → true wins over false ──
 		if (key === "uniqueItems") {
 			(resolved as Record<string, unknown>)[key] =
 				resolvedVal === true || branchVal === true;
-			return;
+			continue;
 		}
 
-		// ── pattern / format → la branche gagne (plus spécifique au contexte) ──
+		// ── pattern / format → branch wins (more context-specific) ──
 		if (key === "pattern" || key === "format") {
 			(resolved as Record<string, unknown>)[key] = branchVal;
-			return;
+			continue;
 		}
 
-		// ── Fallback : tentative de merge via engine pour les cas restants ──
+		// ── constraints → union + dedup (intersection semantics) ──
+		// Constraints follow allOf semantics: both the base and the branch
+		// constraints must be satisfied. This is the same logic used by
+		// the merge engine's applyConstraintsMerge post-processor.
+		if (key === "constraints") {
+			const merged = mergeConstraints(resolvedVal, branchVal);
+			if (merged !== undefined) {
+				(resolved as Record<string, unknown>)[key] = merged;
+			}
+			continue;
+		}
+
+		// ── Fallback: attempt merge via engine for remaining cases ──
 		const base = { [key]: resolvedVal } as JSONSchema7Definition;
 		const branch = { [key]: branchVal } as JSONSchema7Definition;
 		const merged = engine.merge(base, branch);
@@ -571,7 +350,7 @@ function mergeBranchInto(
 				merged as unknown as Record<string, unknown>
 			)[key];
 		} else {
-			// Merge échoué → la branche gagne (contexte conditionnel applicable)
+			// Merge failed → branch wins (applicable conditional context)
 			(resolved as Record<string, unknown>)[key] = branchVal;
 		}
 	}
@@ -580,12 +359,12 @@ function mergeBranchInto(
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Résout les `if/then/else` d'un schema en évaluant le `if` contre
- * des données partielles (discriminants).
+ * Resolves `if/then/else` in a schema by evaluating the `if` against
+ * partial data (discriminants).
  *
- * @param schema  Le schema contenant potentiellement des if/then/else
- * @param data    Données partielles utilisées pour évaluer les conditions
- * @param engine  Le MergeEngine pour merger les branches
+ * @param schema  The schema potentially containing if/then/else
+ * @param data    Partial data used to evaluate the conditions
+ * @param engine  The MergeEngine for merging branches
  *
  * @example
  * ```ts
@@ -598,7 +377,7 @@ function mergeBranchInto(
  * };
  *
  * const { resolved } = resolveConditions(form, { accountType: "business" }, engine);
- * // → resolved n'a plus de if/then/else, mais a required: ["companyName"]
+ * // → resolved no longer has if/then/else, but has required: ["companyName"]
  * ```
  */
 export function resolveConditions(
@@ -633,12 +412,12 @@ export function resolveConditions(
 	// ── Copy-on-write: only copy when mutations are needed ──
 	let resolved = { ...schema };
 
-	// ── Phase 1 : Résoudre les if/then/else dans allOf ──
+	// ── Phase 1: Resolve if/then/else in allOf ──
 	if (hasAllOfConditions) {
 		resolved = resolveAllOfConditions(resolved, data, engine, discriminant);
 	}
 
-	// ── Phase 2 : Résoudre le if/then/else de ce niveau ──
+	// ── Phase 2: Resolve if/then/else at this level ──
 	if (resolved.if !== undefined) {
 		const ifSchema = resolved.if as JSONSchema7;
 		const matches = evaluateCondition(ifSchema, data);
@@ -661,7 +440,7 @@ export function resolveConditions(
 		delete resolved.else;
 	}
 
-	// ── Phase 3 : Récurser dans les properties ──
+	// ── Phase 3: Recurse into properties ──
 	resolved = resolveNestedProperties(resolved, data, engine, discriminant);
 
 	return { resolved, branch, discriminant };
@@ -670,11 +449,10 @@ export function resolveConditions(
 // ─── Internal phases ─────────────────────────────────────────────────────────
 
 /**
- * Phase 1 : Parcourt les entrées `allOf` et résout celles qui contiennent
- * un `if/then/else`. Les entrées non-conditionnelles sont préservées.
+ * Phase 1: Iterates over `allOf` entries and resolves those containing
+ * an `if/then/else`. Non-conditional entries are preserved.
  *
- * Utilise `_.reduce` pour accumuler les entrées restantes et `_.filter`
- * pour séparer les clés conditionnelles des non-conditionnelles.
+
  */
 function resolveAllOfConditions(
 	resolved: JSONSchema7,
@@ -699,7 +477,7 @@ function resolveAllOfConditions(
 			continue;
 		}
 
-		// Résoudre la condition de cette entrée allOf
+		// Resolve the condition of this allOf entry
 		const ifSchema = subSchema.if as JSONSchema7;
 		const matches = evaluateCondition(ifSchema, data);
 
@@ -715,7 +493,7 @@ function resolveAllOfConditions(
 			);
 		}
 
-		// Garder les parties non-conditionnelles de l'entrée allOf
+		// Keep non-conditional parts of the allOf entry
 		const remaining = omitKeys(
 			subSchema as unknown as Record<string, unknown>,
 			["if", "then", "else"],
@@ -736,11 +514,10 @@ function resolveAllOfConditions(
 }
 
 /**
- * Phase 3 : Récurse dans les `properties` du schema résolu pour résoudre
- * les conditions imbriquées (ex: un objet dont une propriété a un if/then/else).
+ * Phase 3: Recurses into the `properties` of the resolved schema to resolve
+ * nested conditions (e.g. an object whose property has an if/then/else).
  *
- * Utilise `_.mapValues` pour transformer chaque propriété en une seule passe,
- * et `_.forEach` pour remonter les discriminants imbriqués.
+
  */
 function resolveNestedProperties(
 	resolved: JSONSchema7,
@@ -776,14 +553,14 @@ function resolveNestedProperties(
 			continue;
 		}
 
-		// Données imbriquées disponibles → résoudre récursivement
+		// Nested data available → resolve recursively
 		const nestedData = isPlainObj(data[key])
 			? (data[key] as Record<string, unknown>)
 			: {};
 
 		const nested = resolveConditions(propSchema, nestedData, engine);
 
-		// Remonter les discriminants imbriqués avec prefix
+		// Propagate nested discriminants with prefix
 		for (const dk of Object.keys(nested.discriminant)) {
 			discriminant[`${key}.${dk}`] = nested.discriminant[dk];
 		}

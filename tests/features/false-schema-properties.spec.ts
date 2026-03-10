@@ -184,7 +184,7 @@ describe("false-schema properties — with if/then condition resolution", () => 
 			then: { properties: { title: false } },
 		};
 
-		const result = checker.check(sub, sup, { subData: { withAI: true } });
+		const result = checker.check(sub, sup, { data: { withAI: true } });
 		expect(result.isSubset).toBe(true);
 		expect(result.errors).toHaveLength(0);
 	});
@@ -213,7 +213,9 @@ describe("false-schema properties — with if/then condition resolution", () => 
 			then: { properties: { title: false } },
 		};
 
-		const result = checker.check(sub, sup, { subData: { withAI: true } });
+		const result = checker.check(sub, sup, {
+			data: { withAI: true, title: "My Article" },
+		});
 		expect(result.isSubset).toBe(false);
 	});
 
@@ -242,7 +244,9 @@ describe("false-schema properties — with if/then condition resolution", () => 
 		};
 
 		// withAI: false → condition not triggered → title stays { type: "string" }
-		const result = checker.check(sub, sup, { subData: { withAI: false } });
+		const result = checker.check(sub, sup, {
+			data: { withAI: false, title: "My Article" },
+		});
 		expect(result.isSubset).toBe(true);
 		expect(result.errors).toHaveLength(0);
 	});

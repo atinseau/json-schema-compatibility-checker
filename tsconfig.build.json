@@ -6,6 +6,6 @@
 		"declaration": true,
 		"emitDeclarationOnly": true
 	},
-	"include": ["src/**/*"],
-	"exclude": ["node_modules", "dist", "tests", "benchmarks"]
+	"include": ["src/**/*", "global.d.ts"],
+	"exclude": ["node_modules", "dist", "tests", "benchmarks", "index.ts"]
 }

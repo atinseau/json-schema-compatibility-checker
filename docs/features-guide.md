@@ -775,6 +775,91 @@ checker.intersect(
 // → { type: "string", format: "email" }
 ```
 
+### Runtime validation in `check()`
+
+When you call `check(sub, sup, { data })`, runtime data is not only used to resolve `if/then/else` conditions.
+
+It is also used to validate constraints carried by the resolved schemas:
+
+- `enum`
+- `const`
+- `format`
+
+This applies even outside conditional branches.
+
+#### `enum` / `const` case
+
+If runtime data is provided, the library checks whether the concrete value is compatible with the relevant `enum` or `const` constraints.
+
+```ts
+checker.check(
+  { type: "string" },
+  { type: "string", enum: ["red", "green", "blue"] },
+  { data: "red" }
+);
+// → subset valide pour cette valeur runtime
+```
+
+À l'inverse, si la donnée n'appartient pas à l'`enum`, le check runtime doit échouer :
+
+```ts
+checker.check(
+  { type: "string" },
+  { type: "string", enum: ["red", "green", "blue"] },
+  { data: "yellow" }
+);
+// → incompatible pour cette valeur runtime
+```
+
+Le même principe s'applique à `const`.
+
+#### Cas `format`
+
+La validation de `format` ne se limite pas aux conditions `if`.
+
+Si un schéma résolu contient `format: "email"` ou n'importe quel autre format supporté, et qu'une donnée runtime est fournie, cette donnée est aussi validée contre ce format dans le pipeline de `check()`.
+
+```ts
+checker.check(
+  { type: "string", format: "email" },
+  { type: "string", format: "email" },
+  { data: "test@example.com" }
+);
+// → compatible
+```
+
+Si la donnée runtime ne respecte pas le format, le résultat doit refléter cette incompatibilité runtime :
+
+```ts
+checker.check(
+  { type: "string", format: "email" },
+  { type: "string", format: "email" },
+  { data: "je-ne-suis-pas-un-email" }
+);
+// → incompatible pour cette valeur runtime
+```
+
+Même logique pour un format personnalisé supporté par la librairie, par exemple :
+
+```ts
+checker.check(
+  {
+    type: "string",
+    enum: ["red", "green", "blue"],
+    format: "color",
+  },
+  {
+    type: "string",
+    enum: ["red", "green", "blue"],
+    format: "color",
+  },
+  {
+    data: "Je ne suis pas une couleur",
+  }
+);
+// → incompatible pour cette valeur runtime
+```
+
 ### Formats dans les conditions
 
 Les formats sont aussi évalués dans les conditions `if/then/else` via `class-validator` :
@@ -798,7 +883,12 @@ const result = checker.resolveConditions(schema, {
 console.log(result.branch); // "then"
 ```
 
+> En résumé : `format` est évalué à deux endroits distincts :
+> - pendant la résolution des conditions `if/then/else`
+> - pendant `check()` quand des données runtime sont fournies
+
 ---
+
 
 ## 12. Patterns regex (`pattern`)
 

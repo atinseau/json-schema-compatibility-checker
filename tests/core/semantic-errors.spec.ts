@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { JSONSchema7 } from "json-schema";
-import { JsonSchemaCompatibilityChecker } from "../../src";
+import { formatSchemaType, JsonSchemaCompatibilityChecker } from "../../src";
 
 let checker: JsonSchemaCompatibilityChecker;
 
@@ -2702,5 +2702,289 @@ describe("anyOf nested in properties errors", () => {
 			(e) => e.key === "value" && e.received === "boolean",
 		);
 		expect(valueError).toBeDefined();
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Custom constraints semantic errors
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("semantic errors — constraints", () => {
+	test("missing constraint in sub produces error", () => {
+		const sub: JSONSchema7 = { type: "string", constraints: ["IsUuid"] };
+		const sup: JSONSchema7 = {
+			type: "string",
+			constraints: ["IsUuid", "BelongsToScope"],
+		};
+
+		const result = checker.check(sub, sup);
+		expect(result.isSubset).toBe(false);
+		expect(result.errors.length).toBeGreaterThan(0);
+		expect(result.errors).toContainEqual(
+			expect.objectContaining({
+				expected: expect.stringContaining("BelongsToScope"),
+			}),
+		);
+	});
+
+	test("identical constraints → no constraint errors", () => {
+		const sub: JSONSchema7 = { type: "string", constraints: ["IsUuid"] };
+		const sup: JSONSchema7 = { type: "string", constraints: ["IsUuid"] };
+
+		const result = checker.check(sub, sup);
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	test("sub has more constraints than sup → no constraint errors", () => {
+		const sub: JSONSchema7 = {
+			type: "string",
+			constraints: ["IsUuid", "BelongsToScope"],
+		};
+		const sup: JSONSchema7 = { type: "string", constraints: ["IsUuid"] };
+
+		const result = checker.check(sub, sup);
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	test("object constraint with params mismatch produces error", () => {
+		const sub: JSONSchema7 = {
+			type: "string",
+			constraints: [{ name: "MinAge", params: { min: 18 } }],
+		};
+		const sup: JSONSchema7 = {
+			type: "string",
+			constraints: [{ name: "MinAge", params: { min: 21 } }],
+		};
+
+		const result = checker.check(sub, sup);
+		expect(result.isSubset).toBe(false);
+		expect(result.errors.length).toBeGreaterThan(0);
+		expect(result.errors).toContainEqual(
+			expect.objectContaining({
+				expected: expect.stringContaining("MinAge"),
+			}),
+		);
+	});
+
+	test("constraint error on nested property", () => {
+		const sub: JSONSchema7 = {
+			type: "object",
+			properties: { id: { type: "string" } },
+			required: ["id"],
+		};
+		const sup: JSONSchema7 = {
+			type: "object",
+			properties: {
+				id: { type: "string", constraints: ["IsUuid"] } as JSONSchema7,
+			},
+			required: ["id"],
+		};
+
+		const result = checker.check(sub, sup);
+		expect(result.isSubset).toBe(false);
+		expect(result.errors).toContainEqual(
+			expect.objectContaining({
+				key: "id",
+				expected: expect.stringContaining("IsUuid"),
+			}),
+		);
+	});
+
+	test("sup without constraints + sub with constraints → no errors", () => {
+		const sub: JSONSchema7 = { type: "string", constraints: ["IsUuid"] };
+		const sup: JSONSchema7 = { type: "string" };
+
+		const result = checker.check(sub, sup);
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	test("constraint error on object-type schema", () => {
+		const sub: JSONSchema7 = {
+			type: "object",
+			properties: { name: { type: "string" } },
+			required: ["name"],
+		};
+		const sup: JSONSchema7 = {
+			type: "object",
+			properties: { name: { type: "string" } },
+			required: ["name"],
+			constraints: ["HasValidOwner"],
+		};
+
+		const result = checker.check(sub, sup);
+		expect(result.isSubset).toBe(false);
+		expect(result.errors).toContainEqual(
+			expect.objectContaining({
+				expected: expect.stringContaining("HasValidOwner"),
+				received: "no constraints",
+			}),
+		);
+	});
+
+	test("constraint error on array-type schema", () => {
+		const sub: JSONSchema7 = {
+			type: "array",
+			items: { type: "string" },
+		};
+		const sup: JSONSchema7 = {
+			type: "array",
+			items: { type: "string" },
+			constraints: ["IsNonEmpty"],
+		};
+
+		const result = checker.check(sub, sup);
+		expect(result.isSubset).toBe(false);
+		expect(result.errors).toContainEqual(
+			expect.objectContaining({
+				expected: expect.stringContaining("IsNonEmpty"),
+				received: "no constraints",
+			}),
+		);
+	});
+
+	test("constraint error on number-type schema (generic block)", () => {
+		const sub: JSONSchema7 = { type: "number" };
+		const sup: JSONSchema7 = { type: "number", constraints: ["IsPositive"] };
+
+		const result = checker.check(sub, sup);
+		expect(result.isSubset).toBe(false);
+		expect(result.errors).toContainEqual(
+			expect.objectContaining({
+				expected: expect.stringContaining("IsPositive"),
+				received: "no constraints",
+			}),
+		);
+	});
+
+	test("multiple missing constraints each produce an error", () => {
+		const sub: JSONSchema7 = { type: "string" };
+		const sup: JSONSchema7 = {
+			type: "string",
+			constraints: ["IsUuid", "BelongsToScope"],
+		};
+
+		const result = checker.check(sub, sup);
+		expect(result.isSubset).toBe(false);
+		const constraintErrors = result.errors.filter((e) =>
+			e.expected.startsWith("constraint:"),
+		);
+		expect(constraintErrors).toHaveLength(2);
+	});
+
+	test("object constraint without params matches correctly", () => {
+		const sub: JSONSchema7 = {
+			type: "string",
+			constraints: [{ name: "IsCustom" }],
+		};
+		const sup: JSONSchema7 = {
+			type: "string",
+			constraints: [{ name: "IsCustom" }],
+		};
+
+		const result = checker.check(sub, sup);
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toHaveLength(0);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  formatSchemaType — constraints display
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("formatSchemaType — constraints display", () => {
+	test("schema with single string constraint", () => {
+		const schema = { type: "string", constraints: ["IsUuid"] } as JSONSchema7;
+		const result = formatSchemaType(schema);
+		expect(result).toContain("string");
+		expect(result).toContain("[IsUuid]");
+	});
+
+	test("schema with multiple constraints", () => {
+		const schema = {
+			type: "string",
+			constraints: ["IsUuid", "BelongsToScope"],
+		} as JSONSchema7;
+		const result = formatSchemaType(schema);
+		expect(result).toContain("[IsUuid, BelongsToScope]");
+	});
+
+	test("schema with format and constraints", () => {
+		const schema = {
+			type: "string",
+			format: "uuid",
+			constraints: ["BelongsToScope"],
+		} as JSONSchema7;
+		const result = formatSchemaType(schema);
+		expect(result).toContain("string");
+		expect(result).toContain("[BelongsToScope]");
+	});
+
+	test("schema with object constraint (with params)", () => {
+		const schema = {
+			type: "string",
+			constraints: [{ name: "MinAge", params: { min: 18 } }],
+		} as JSONSchema7;
+		const result = formatSchemaType(schema);
+		expect(result).toContain("[MinAge(");
+		expect(result).toContain('"min":18');
+	});
+
+	test("schema with object constraint (no params)", () => {
+		const schema = {
+			type: "string",
+			constraints: [{ name: "IsCustom" }],
+		} as JSONSchema7;
+		const result = formatSchemaType(schema);
+		expect(result).toContain("[IsCustom]");
+	});
+
+	test("schema without constraints has no suffix", () => {
+		const schema: JSONSchema7 = { type: "string" };
+		const result = formatSchemaType(schema);
+		expect(result).not.toContain("[");
+		expect(result).not.toContain("]");
+	});
+
+	test("schema with empty constraints array has no suffix", () => {
+		const schema = { type: "string", constraints: [] } as JSONSchema7;
+		const result = formatSchemaType(schema);
+		expect(result).not.toContain("[");
+		expect(result).not.toContain("]");
+	});
+
+	test("enum schema with constraints", () => {
+		const schema = {
+			type: "string",
+			enum: ["a", "b"],
+			constraints: ["IsPositive"],
+		} as JSONSchema7;
+		const result = formatSchemaType(schema);
+		expect(result).toContain("[IsPositive]");
+	});
+
+	test("single constraint (non-array form) is still displayed", () => {
+		// After step 1 normalization, this should be an array.
+		// But formatSchemaType should handle both forms defensively.
+		const schema = { type: "string", constraints: "IsUuid" } as JSONSchema7;
+		const result = formatSchemaType(schema);
+		expect(result).toContain("[IsUuid]");
+	});
+
+	test("boolean schema true has no suffix", () => {
+		const result = formatSchemaType(true);
+		expect(result).toBe("any");
+	});
+
+	test("boolean schema false has no suffix", () => {
+		const result = formatSchemaType(false);
+		expect(result).toBe("never");
+	});
+
+	test("undefined schema has no suffix", () => {
+		const result = formatSchemaType(undefined);
+		expect(result).toBe("undefined");
 	});
 });
