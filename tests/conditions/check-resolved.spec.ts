@@ -36,7 +36,7 @@ describe("check with conditions", () => {
 		},
 	};
 
-	test("sub matching then-branch ⊆ resolved sup (fixes false negative)", () => {
+	test("sub matching then-branch ⊆ resolved sup (fixes false negative)", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -50,14 +50,14 @@ describe("check with conditions", () => {
 		expect(checker.isSubset(sub, conditionalSup)).toBe(false);
 
 		// With resolution: true! data is a complete instance matching the then-branch.
-		const result = checker.check(sub, conditionalSup, {
+		const result = await checker.check(sub, conditionalSup, {
 			data: { kind: "text", value: "hello" },
 		});
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSup.branch).toBe("then");
 	});
 
-	test("sub matching else-branch ⊆ resolved sup", () => {
+	test("sub matching else-branch ⊆ resolved sup", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -67,14 +67,14 @@ describe("check with conditions", () => {
 			required: ["kind", "value"],
 		};
 
-		const result = checker.check(sub, conditionalSup, {
+		const result = await checker.check(sub, conditionalSup, {
 			data: { kind: "data", value: 42 },
 		});
 		expect(result.isSubset).toBe(true);
 		expect(result.resolvedSup.branch).toBe("else");
 	});
 
-	test("sub violating resolved branch ⊄ resolved sup", () => {
+	test("sub violating resolved branch ⊄ resolved sup", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -87,13 +87,13 @@ describe("check with conditions", () => {
 		// data matches the then-branch resolution, but sub declares value: number
 		// which conflicts with the resolved sup's value: string.
 		// The static check detects the type mismatch after condition resolution.
-		const result = checker.check(sub, conditionalSup, {
+		const result = await checker.check(sub, conditionalSup, {
 			data: { kind: "text", value: "hello" },
 		});
 		expect(result.isSubset).toBe(false);
 	});
 
-	test("returns resolvedSub and resolvedSup in result", () => {
+	test("returns resolvedSub and resolvedSup in result", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -103,7 +103,7 @@ describe("check with conditions", () => {
 			required: ["kind", "value"],
 		};
 
-		const result = checker.check(sub, conditionalSup, {
+		const result = await checker.check(sub, conditionalSup, {
 			data: { kind: "text", value: "hello" },
 		});
 
@@ -113,7 +113,7 @@ describe("check with conditions", () => {
 		expect(result.resolvedSup.discriminant).toEqual({ kind: "text" });
 	});
 
-	test("uses data for both sub and sup when data resolves conditions on both", () => {
+	test("uses data for both sub and sup when data resolves conditions on both", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -125,7 +125,7 @@ describe("check with conditions", () => {
 			then: { properties: { value: { type: "string", minLength: 1 } } },
 		};
 
-		const result = checker.check(sub, conditionalSup, {
+		const result = await checker.check(sub, conditionalSup, {
 			data: { kind: "text", value: "hello" },
 		});
 
@@ -134,7 +134,7 @@ describe("check with conditions", () => {
 		expect(result.resolvedSup.branch).toBe("then");
 	});
 
-	test("uses same data for both sub and sup resolution", () => {
+	test("uses same data for both sub and sup resolution", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: { kind: { const: "text" }, value: { type: "string" } },
@@ -142,7 +142,7 @@ describe("check with conditions", () => {
 		};
 
 		// Same data resolves both sub and sup conditions identically
-		const resultThen = checker.check(sub, conditionalSup, {
+		const resultThen = await checker.check(sub, conditionalSup, {
 			data: { kind: "text", value: "hello" },
 		});
 		expect(resultThen.resolvedSup.branch).toBe("then");
@@ -154,7 +154,7 @@ describe("check with conditions", () => {
 			properties: { kind: { const: "other" }, value: { type: "number" } },
 			required: ["kind", "value"],
 		};
-		const resultElse = checker.check(subElse, conditionalSup, {
+		const resultElse = await checker.check(subElse, conditionalSup, {
 			data: { kind: "other", value: 42 },
 		});
 		expect(resultElse.resolvedSup.branch).toBe("else");
@@ -162,7 +162,7 @@ describe("check with conditions", () => {
 
 	// ── Real-world: form with conditional required ───────────────────────────
 
-	test("business form output ⊆ conditional form schema (resolved)", () => {
+	test("business form output ⊆ conditional form schema (resolved)", async () => {
 		const formSchema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -205,7 +205,7 @@ describe("check with conditions", () => {
 		expect(checker.isSubset(businessOutput, formSchema)).toBe(false);
 
 		// With resolution: true! Data is a complete business instance.
-		const result = checker.check(businessOutput, formSchema, {
+		const result = await checker.check(businessOutput, formSchema, {
 			data: {
 				accountType: "business",
 				email: "ceo@acme.com",
@@ -216,7 +216,7 @@ describe("check with conditions", () => {
 		expect(result.isSubset).toBe(true);
 	});
 
-	test("personal form output ⊆ conditional form schema (resolved)", () => {
+	test("personal form output ⊆ conditional form schema (resolved)", async () => {
 		const formSchema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -253,7 +253,7 @@ describe("check with conditions", () => {
 			additionalProperties: false,
 		};
 
-		const result = checker.check(personalOutput, formSchema, {
+		const result = await checker.check(personalOutput, formSchema, {
 			data: {
 				accountType: "personal",
 				email: "alice@example.com",
@@ -265,7 +265,7 @@ describe("check with conditions", () => {
 		expect(result.resolvedSup.branch).toBe("else");
 	});
 
-	test("incomplete form output ⊄ conditional form schema (resolved)", () => {
+	test("incomplete form output ⊄ conditional form schema (resolved)", async () => {
 		const formSchema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -291,7 +291,7 @@ describe("check with conditions", () => {
 			// Missing companyName!
 		};
 
-		const result = checker.check(incomplete, formSchema, {
+		const result = await checker.check(incomplete, formSchema, {
 			data: { accountType: "business", email: "test@example.com" },
 		});
 		expect(result.isSubset).toBe(false);
@@ -299,7 +299,7 @@ describe("check with conditions", () => {
 
 	// ── Nested conditional with check + conditions ───────────────────────────
 
-	test("nested conditional resolved via check with conditions", () => {
+	test("nested conditional resolved via check with conditions", async () => {
 		const sup: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -344,7 +344,7 @@ describe("check with conditions", () => {
 			required: ["config"],
 		};
 
-		const result = checker.check(sub, sup, {
+		const result = await checker.check(sub, sup, {
 			data: { config: { mode: "safe", retries: 5 } },
 		});
 		expect(result.isSubset).toBe(true);
@@ -352,7 +352,7 @@ describe("check with conditions", () => {
 
 	// ── Partial data without validate — no runtime validation ───────────────
 
-	test("partial data (missing required field) without validate → still passes static check", () => {
+	test("partial data (missing required field) without validate → still passes static check", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -365,7 +365,7 @@ describe("check with conditions", () => {
 		// Data is missing `value`, but without `validate: true` only condition
 		// resolution + narrowing + static check are performed.
 		// The schemas are structurally compatible → isSubset: true.
-		const result = checker.check(sub, conditionalSup, {
+		const result = await checker.check(sub, conditionalSup, {
 			data: { kind: "text" },
 		});
 		expect(result.isSubset).toBe(true);
@@ -373,7 +373,7 @@ describe("check with conditions", () => {
 
 	// ── Partial data with validate: true triggers runtime validation failure ──
 
-	test("partial data (missing required field) with validate: true → runtime validation fails", () => {
+	test("partial data (missing required field) with validate: true → runtime validation fails", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -385,7 +385,7 @@ describe("check with conditions", () => {
 
 		// Data is missing `value` — both sub and conditionalSup require it.
 		// With `validate: true`, AJV catches this → isSubset: false with errors.
-		const result = checker.check(sub, conditionalSup, {
+		const result = await checker.check(sub, conditionalSup, {
 			data: { kind: "text" },
 			validate: true,
 		});

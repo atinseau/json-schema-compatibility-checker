@@ -167,134 +167,16 @@ export class JsonSchemaCompatibilityChecker {
 		sub: JSONSchema7Definition,
 		sup: JSONSchema7Definition,
 		options: CheckRuntimeOptions,
-	): ResolvedSubsetResult;
+	): Promise<ResolvedSubsetResult>;
 	check(sub: JSONSchema7Definition, sup: JSONSchema7Definition): SubsetResult;
 	check(
 		sub: JSONSchema7Definition,
 		sup: JSONSchema7Definition,
 		options?: CheckRuntimeOptions,
-	): SubsetResult | ResolvedSubsetResult {
+	): SubsetResult | Promise<ResolvedSubsetResult> {
 		// ── Runtime-aware path ──
 		if (options) {
-			const data = options.data;
-			const shouldValidate = options.validate === true;
-
-			// resolveConditions expects Record<string, unknown> for property access;
-			// coerce non-object / undefined data to empty object so conditions
-			// are always resolved (v1.0.11 compat: subData: undefined → {})
-			const dataForConditions: Record<string, unknown> = isPlainObj(data)
-				? data
-				: {};
-
-			const resolvedSub = resolveConditions(
-				sub as JSONSchema7,
-				dataForConditions,
-				this.engine,
-			);
-			const resolvedSup = resolveConditions(
-				sup as JSONSchema7,
-				dataForConditions,
-				this.engine,
-			);
-
-			// ── Runtime-aware data narrowing ──
-			// Apply narrowing only when concrete data is available.
-			// When data is undefined there is nothing to narrow with.
-			// Boolean schemas (true/false) cannot be narrowed — skip narrowing
-			// to avoid passing a non-object to narrowSchemaWithData.
-			const canNarrow = data !== undefined;
-			const canNarrowSub = canNarrow && isPlainObj(resolvedSub.resolved);
-			const canNarrowSup = canNarrow && isPlainObj(resolvedSup.resolved);
-
-			const narrowedSubResolved = canNarrowSub
-				? narrowSchemaWithData(resolvedSub.resolved, data, resolvedSup.resolved)
-				: resolvedSub.resolved;
-
-			const narrowedSupResolved = canNarrowSup
-				? narrowSchemaWithData(resolvedSup.resolved, data, resolvedSub.resolved)
-				: resolvedSup.resolved;
-
-			// ── Static subset check ──
-			// Structural incompatibilities are schema-level problems — they are
-			// permanent regardless of the concrete data. Run this before runtime
-			// validation so that static errors always surface with higher priority.
-			const staticResult = this.checkInternal(
-				narrowedSubResolved,
-				narrowedSupResolved,
-			);
-
-			if (!staticResult.isSubset) {
-				return {
-					...staticResult,
-					resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
-					resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
-				};
-			}
-
-			// ── Runtime validation (opt-in) ──
-			// Only runs when `validate: true` is explicitly set.
-			// Validates the concrete data against both resolved/narrowed schemas
-			// via AJV, then runs custom constraint validators if registered.
-			if (shouldValidate && data !== undefined) {
-				const runtimeErrors: SchemaError[] = [];
-
-				runtimeErrors.push(
-					...this.prefixRuntimeErrors(
-						getRuntimeValidationErrors(narrowedSubResolved, data),
-						"$sub",
-					),
-				);
-
-				runtimeErrors.push(
-					...this.prefixRuntimeErrors(
-						getRuntimeValidationErrors(narrowedSupResolved, data),
-						"$sup",
-					),
-				);
-
-				// ── Constraint validation ──
-				// Validate runtime data against custom constraints in both schemas.
-				// Always runs when validate: true — if a schema declares constraints
-				// that are not registered in the registry, validateSchemaConstraints
-				// will report them as "unknown constraint (not registered)" errors.
-				runtimeErrors.push(
-					...this.prefixRuntimeErrors(
-						validateSchemaConstraints(
-							narrowedSubResolved,
-							data,
-							this.constraintValidators,
-						),
-						"$sub",
-					),
-				);
-
-				runtimeErrors.push(
-					...this.prefixRuntimeErrors(
-						validateSchemaConstraints(
-							narrowedSupResolved,
-							data,
-							this.constraintValidators,
-						),
-						"$sup",
-					),
-				);
-
-				if (runtimeErrors.length > 0) {
-					return {
-						isSubset: false,
-						merged: null,
-						errors: runtimeErrors,
-						resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
-						resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
-					};
-				}
-			}
-
-			return {
-				...staticResult,
-				resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
-				resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
-			};
+			return this.checkWithOptions(sub, sup, options);
 		}
 
 		// ── Standard path (no condition resolution) ──
@@ -379,6 +261,138 @@ export class JsonSchemaCompatibilityChecker {
 	}
 
 	// ── Private ────────────────────────────────────────────────────────────
+
+	/**
+	 * Internal runtime-aware check logic. Extracted as an async method
+	 * so that `check()` without options stays synchronous while the
+	 * runtime path can `await` async constraint validators.
+	 */
+	private async checkWithOptions(
+		sub: JSONSchema7Definition,
+		sup: JSONSchema7Definition,
+		options: CheckRuntimeOptions,
+	): Promise<ResolvedSubsetResult> {
+		const data = options.data;
+		const shouldValidate = options.validate === true;
+
+		// resolveConditions expects Record<string, unknown> for property access;
+		// coerce non-object / undefined data to empty object so conditions
+		// are always resolved (v1.0.11 compat: subData: undefined → {})
+		const dataForConditions: Record<string, unknown> = isPlainObj(data)
+			? data
+			: {};
+
+		const resolvedSub = resolveConditions(
+			sub as JSONSchema7,
+			dataForConditions,
+			this.engine,
+		);
+		const resolvedSup = resolveConditions(
+			sup as JSONSchema7,
+			dataForConditions,
+			this.engine,
+		);
+
+		// ── Runtime-aware data narrowing ──
+		// Apply narrowing only when concrete data is available.
+		// When data is undefined there is nothing to narrow with.
+		// Boolean schemas (true/false) cannot be narrowed — skip narrowing
+		// to avoid passing a non-object to narrowSchemaWithData.
+		const canNarrow = data !== undefined;
+		const canNarrowSub = canNarrow && isPlainObj(resolvedSub.resolved);
+		const canNarrowSup = canNarrow && isPlainObj(resolvedSup.resolved);
+
+		const narrowedSubResolved = canNarrowSub
+			? narrowSchemaWithData(resolvedSub.resolved, data, resolvedSup.resolved)
+			: resolvedSub.resolved;
+
+		const narrowedSupResolved = canNarrowSup
+			? narrowSchemaWithData(resolvedSup.resolved, data, resolvedSub.resolved)
+			: resolvedSup.resolved;
+
+		// ── Static subset check ──
+		// Structural incompatibilities are schema-level problems — they are
+		// permanent regardless of the concrete data. Run this before runtime
+		// validation so that static errors always surface with higher priority.
+		const staticResult = this.checkInternal(
+			narrowedSubResolved,
+			narrowedSupResolved,
+		);
+
+		if (!staticResult.isSubset) {
+			return {
+				...staticResult,
+				resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
+				resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
+			};
+		}
+
+		// ── Runtime validation (opt-in) ──
+		// Only runs when `validate: true` is explicitly set.
+		// Validates the concrete data against both resolved/narrowed schemas
+		// via AJV, then runs custom constraint validators if registered.
+		if (shouldValidate && data !== undefined) {
+			const runtimeErrors: SchemaError[] = [];
+
+			runtimeErrors.push(
+				...this.prefixRuntimeErrors(
+					getRuntimeValidationErrors(narrowedSubResolved, data),
+					"$sub",
+				),
+			);
+
+			runtimeErrors.push(
+				...this.prefixRuntimeErrors(
+					getRuntimeValidationErrors(narrowedSupResolved, data),
+					"$sup",
+				),
+			);
+
+			// ── Constraint validation ──
+			// Validate runtime data against custom constraints in both schemas.
+			// Always runs when validate: true — if a schema declares constraints
+			// that are not registered in the registry, validateSchemaConstraints
+			// will report them as "unknown constraint (not registered)" errors.
+			// Constraint validators may be async, so we await the results.
+			runtimeErrors.push(
+				...this.prefixRuntimeErrors(
+					await validateSchemaConstraints(
+						narrowedSubResolved,
+						data,
+						this.constraintValidators,
+					),
+					"$sub",
+				),
+			);
+
+			runtimeErrors.push(
+				...this.prefixRuntimeErrors(
+					await validateSchemaConstraints(
+						narrowedSupResolved,
+						data,
+						this.constraintValidators,
+					),
+					"$sup",
+				),
+			);
+
+			if (runtimeErrors.length > 0) {
+				return {
+					isSubset: false,
+					merged: null,
+					errors: runtimeErrors,
+					resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
+					resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
+				};
+			}
+		}
+
+		return {
+			...staticResult,
+			resolvedSub: { ...resolvedSub, resolved: narrowedSubResolved },
+			resolvedSup: { ...resolvedSup, resolved: narrowedSupResolved },
+		};
+	}
 
 	private prefixRuntimeErrors(
 		errors: SchemaError[],

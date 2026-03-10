@@ -437,7 +437,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 			expect(codeProp.pattern).toBe("^[A-Z]{3}-[0-9]{4}$");
 		});
 
-		test("sub with fixed pattern ⊆ resolved sup with same pattern via checkResolved", () => {
+		test("sub with fixed pattern ⊆ resolved sup with same pattern via checkResolved", async () => {
 			const sup: JSONSchema7 = {
 				type: "object",
 				properties: {
@@ -463,7 +463,7 @@ describe("Pattern intersection — behavior and limitations", () => {
 				required: ["mode", "code"],
 			};
 
-			const result = checker.check(sub, sup, {
+			const result = await checker.check(sub, sup, {
 				data: { mode: "strict", code: "ABC" },
 			});
 			expect(result.isSubset).toBe(true);

@@ -95,7 +95,7 @@ describe("constraint validator — runtime validation", () => {
 		});
 	});
 
-	test("valid data passes constraint validation", () => {
+	test("valid data passes constraint validation", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -111,7 +111,7 @@ describe("constraint validator — runtime validation", () => {
 			required: ["id"],
 		};
 
-		const result = checker.check(sub, sup, {
+		const result = await checker.check(sub, sup, {
 			data: { id: "550e8400-e29b-41d4-a716-446655440000" },
 			validate: true,
 		});
@@ -120,7 +120,7 @@ describe("constraint validator — runtime validation", () => {
 		expect(result.errors).toHaveLength(0);
 	});
 
-	test("invalid data fails constraint validation", () => {
+	test("invalid data fails constraint validation", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -136,7 +136,7 @@ describe("constraint validator — runtime validation", () => {
 			required: ["id"],
 		};
 
-		const result = checker.check(sub, sup, {
+		const result = await checker.check(sub, sup, {
 			data: { id: "not-a-uuid" },
 			validate: true,
 		});
@@ -151,7 +151,7 @@ describe("constraint validator — runtime validation", () => {
 		);
 	});
 
-	test("constraint with params validates correctly — valid", () => {
+	test("constraint with params validates correctly — valid", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -163,14 +163,14 @@ describe("constraint validator — runtime validation", () => {
 			required: ["age"],
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { age: 21 },
 			validate: true,
 		});
 		expect(result.isSubset).toBe(true);
 	});
 
-	test("constraint with params validates correctly — invalid", () => {
+	test("constraint with params validates correctly — invalid", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -182,7 +182,7 @@ describe("constraint validator — runtime validation", () => {
 			required: ["age"],
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { age: 15 },
 			validate: true,
 		});
@@ -194,7 +194,7 @@ describe("constraint validator — runtime validation", () => {
 		);
 	});
 
-	test("unknown constraint name produces error", () => {
+	test("unknown constraint name produces error", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -203,7 +203,7 @@ describe("constraint validator — runtime validation", () => {
 			required: ["value"],
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { value: "hello" },
 			validate: true,
 		});
@@ -217,7 +217,7 @@ describe("constraint validator — runtime validation", () => {
 		);
 	});
 
-	test("validator that throws is caught and reported", () => {
+	test("validator that throws is caught and reported", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -226,7 +226,7 @@ describe("constraint validator — runtime validation", () => {
 			required: ["value"],
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { value: "hello" },
 			validate: true,
 		});
@@ -240,7 +240,7 @@ describe("constraint validator — runtime validation", () => {
 		);
 	});
 
-	test("no constraint validators registered → unregistered constraints produce errors at runtime", () => {
+	test("no constraint validators registered → unregistered constraints produce errors at runtime", async () => {
 		const checkerNoValidators = new JsonSchemaCompatibilityChecker();
 
 		const sub: JSONSchema7 = {
@@ -259,7 +259,7 @@ describe("constraint validator — runtime validation", () => {
 		};
 
 		// With validate: true, unregistered constraints are reported as errors
-		const result = checkerNoValidators.check(sub, sup, {
+		const result = await checkerNoValidators.check(sub, sup, {
 			data: { id: "not-a-uuid" },
 			validate: true,
 		});
@@ -293,7 +293,7 @@ describe("constraint validator — runtime validation", () => {
 		expect(result.errors).toHaveLength(0);
 	});
 
-	test("constraints on sup are also validated against data (prefixed with $sup)", () => {
+	test("constraints on sup are also validated against data (prefixed with $sup)", async () => {
 		// Both schemas have the same constraint so the static check passes.
 		// The runtime data violates the constraint, producing errors on both sides.
 		const sub: JSONSchema7 = {
@@ -311,7 +311,7 @@ describe("constraint validator — runtime validation", () => {
 			required: ["id"],
 		};
 
-		const result = checker.check(sub, sup, {
+		const result = await checker.check(sub, sup, {
 			data: { id: "not-a-uuid" },
 			validate: true,
 		});
@@ -325,7 +325,7 @@ describe("constraint validator — runtime validation", () => {
 		);
 	});
 
-	test("constraints on sub are prefixed with $sub", () => {
+	test("constraints on sub are prefixed with $sub", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -341,7 +341,7 @@ describe("constraint validator — runtime validation", () => {
 			required: ["id"],
 		};
 
-		const result = checker.check(sub, sup, {
+		const result = await checker.check(sub, sup, {
 			data: { id: "not-a-uuid" },
 			validate: true,
 		});
@@ -354,7 +354,7 @@ describe("constraint validator — runtime validation", () => {
 		);
 	});
 
-	test("nested property constraints are validated", () => {
+	test("nested property constraints are validated", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -369,7 +369,7 @@ describe("constraint validator — runtime validation", () => {
 			required: ["user"],
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { user: { id: "not-a-uuid" } },
 			validate: true,
 		});
@@ -384,7 +384,7 @@ describe("constraint validator — runtime validation", () => {
 		expect(constraintError?.key).toContain("id");
 	});
 
-	test("array item constraints are validated", () => {
+	test("array item constraints are validated", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -396,7 +396,7 @@ describe("constraint validator — runtime validation", () => {
 			required: ["ids"],
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: {
 				ids: ["550e8400-e29b-41d4-a716-446655440000", "not-a-uuid"],
 			},
@@ -407,13 +407,13 @@ describe("constraint validator — runtime validation", () => {
 		expect(result.errors.length).toBeGreaterThan(0);
 	});
 
-	test("root-level constraints use $root path", () => {
+	test("root-level constraints use $root path", async () => {
 		const schema: JSONSchema7 = {
 			type: "string",
 			constraints: ["IsUuid"],
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: "not-a-uuid",
 			validate: true,
 		});
@@ -425,7 +425,7 @@ describe("constraint validator — runtime validation", () => {
 		expect(hasSubError || hasSupError).toBe(true);
 	});
 
-	test("both sub and sup constraints fail — errors from both sides", () => {
+	test("both sub and sup constraints fail — errors from both sides", async () => {
 		const sub: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -441,7 +441,7 @@ describe("constraint validator — runtime validation", () => {
 			required: ["id"],
 		};
 
-		const result = checker.check(sub, sup, {
+		const result = await checker.check(sub, sup, {
 			data: { id: "not-a-uuid" },
 			validate: true,
 		});
@@ -455,7 +455,7 @@ describe("constraint validator — runtime validation", () => {
 		expect(supErrors.length).toBeGreaterThan(0);
 	});
 
-	test("property not present in data → constraint not validated", () => {
+	test("property not present in data → constraint not validated", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -465,7 +465,7 @@ describe("constraint validator — runtime validation", () => {
 		};
 
 		// Data has no "id" property — constraint on id should not be validated
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { name: "test" },
 			validate: true,
 		});
@@ -474,7 +474,7 @@ describe("constraint validator — runtime validation", () => {
 		expect(result.errors).toHaveLength(0);
 	});
 
-	test("multiple constraints on same property — all validated", () => {
+	test("multiple constraints on same property — all validated", async () => {
 		const multiChecker = new JsonSchemaCompatibilityChecker({
 			constraints: {
 				IsString: (value) => ({
@@ -501,7 +501,7 @@ describe("constraint validator — runtime validation", () => {
 		};
 
 		// Passes IsString but fails IsUuid
-		const result = multiChecker.check(schema, schema, {
+		const result = await multiChecker.check(schema, schema, {
 			data: { id: "not-a-uuid" },
 			validate: true,
 		});
@@ -514,7 +514,7 @@ describe("constraint validator — runtime validation", () => {
 		);
 	});
 
-	test("valid array items all pass constraint validation", () => {
+	test("valid array items all pass constraint validation", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -526,7 +526,7 @@ describe("constraint validator — runtime validation", () => {
 			required: ["ids"],
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: {
 				ids: [
 					"550e8400-e29b-41d4-a716-446655440000",
@@ -542,7 +542,7 @@ describe("constraint validator — runtime validation", () => {
 
 	// ── patternProperties recursion ──────────────────────────────────────────
 
-	test("constraints inside patternProperties are validated", () => {
+	test("constraints inside patternProperties are validated", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			patternProperties: {
@@ -550,7 +550,7 @@ describe("constraint validator — runtime validation", () => {
 			},
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { "x-id": "not-a-uuid" },
 			validate: true,
 		});
@@ -563,7 +563,7 @@ describe("constraint validator — runtime validation", () => {
 		);
 	});
 
-	test("valid data in patternProperties passes constraint validation", () => {
+	test("valid data in patternProperties passes constraint validation", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			patternProperties: {
@@ -571,7 +571,7 @@ describe("constraint validator — runtime validation", () => {
 			},
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { "x-id": "550e8400-e29b-41d4-a716-446655440000" },
 			validate: true,
 		});
@@ -580,7 +580,7 @@ describe("constraint validator — runtime validation", () => {
 		expect(result.errors).toHaveLength(0);
 	});
 
-	test("data keys not matching patternProperties pattern are not validated against it", () => {
+	test("data keys not matching patternProperties pattern are not validated against it", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			patternProperties: {
@@ -589,7 +589,7 @@ describe("constraint validator — runtime validation", () => {
 		};
 
 		// "name" does not match "^x-" → no constraint validation
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { name: "not-a-uuid" },
 			validate: true,
 		});
@@ -599,14 +599,14 @@ describe("constraint validator — runtime validation", () => {
 
 	// ── additionalProperties recursion ───────────────────────────────────────
 
-	test("constraints inside additionalProperties are validated", () => {
+	test("constraints inside additionalProperties are validated", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: { name: { type: "string" } },
 			additionalProperties: { type: "string", constraints: ["IsUuid"] },
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { name: "Alice", extraField: "not-a-uuid" },
 			validate: true,
 		});
@@ -619,7 +619,7 @@ describe("constraint validator — runtime validation", () => {
 		);
 	});
 
-	test("defined properties are NOT validated against additionalProperties schema", () => {
+	test("defined properties are NOT validated against additionalProperties schema", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: { name: { type: "string" } },
@@ -627,7 +627,7 @@ describe("constraint validator — runtime validation", () => {
 		};
 
 		// "name" is in properties → not validated against additionalProperties
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { name: "not-a-uuid" },
 			validate: true,
 		});
@@ -635,14 +635,14 @@ describe("constraint validator — runtime validation", () => {
 		expect(result.isSubset).toBe(true);
 	});
 
-	test("valid additional properties pass constraint validation", () => {
+	test("valid additional properties pass constraint validation", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: { name: { type: "string" } },
 			additionalProperties: { type: "string", constraints: ["IsUuid"] },
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { name: "Alice", extra: "550e8400-e29b-41d4-a716-446655440000" },
 			validate: true,
 		});
@@ -651,7 +651,7 @@ describe("constraint validator — runtime validation", () => {
 		expect(result.errors).toHaveLength(0);
 	});
 
-	test("patternProperties keys excluded from additionalProperties validation", () => {
+	test("patternProperties keys excluded from additionalProperties validation", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: { name: { type: "string" } },
@@ -663,7 +663,7 @@ describe("constraint validator — runtime validation", () => {
 
 		// "x-custom" matches patternProperties "^x-" → NOT additional
 		// → should NOT be validated against additionalProperties constraints
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { name: "Alice", "x-custom": "not-a-uuid" },
 			validate: true,
 		});
@@ -673,7 +673,7 @@ describe("constraint validator — runtime validation", () => {
 
 	// ── dependencies (schema form) recursion ─────────────────────────────────
 
-	test("constraints inside schema-form dependencies are validated", () => {
+	test("constraints inside schema-form dependencies are validated", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -688,7 +688,7 @@ describe("constraint validator — runtime validation", () => {
 			},
 		};
 
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { foo: "hello", bar: "not-a-uuid" },
 			validate: true,
 		});
@@ -701,7 +701,7 @@ describe("constraint validator — runtime validation", () => {
 		);
 	});
 
-	test("schema-form dependency not triggered when key is absent", () => {
+	test("schema-form dependency not triggered when key is absent", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -717,7 +717,7 @@ describe("constraint validator — runtime validation", () => {
 		};
 
 		// "foo" is absent → dependency not triggered → bar constraint not checked
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { bar: "not-a-uuid" },
 			validate: true,
 		});
@@ -725,7 +725,7 @@ describe("constraint validator — runtime validation", () => {
 		expect(result.isSubset).toBe(true);
 	});
 
-	test("array-form dependencies do not trigger constraint validation", () => {
+	test("array-form dependencies do not trigger constraint validation", async () => {
 		const schema: JSONSchema7 = {
 			type: "object",
 			properties: {
@@ -739,11 +739,202 @@ describe("constraint validator — runtime validation", () => {
 
 		// Array-form dependency only asserts presence of "bar", not constraints.
 		// The constraint on "bar" is in properties, and bar is present → validated there.
-		const result = checker.check(schema, schema, {
+		const result = await checker.check(schema, schema, {
 			data: { foo: "hello", bar: "550e8400-e29b-41d4-a716-446655440000" },
 			validate: true,
 		});
 
 		expect(result.isSubset).toBe(true);
+	});
+});
+
+// ── Async constraint validator tests ─────────────────────────────────────────
+
+describe("constraint validator — async validators", () => {
+	let asyncChecker: JsonSchemaCompatibilityChecker;
+
+	beforeAll(() => {
+		asyncChecker = new JsonSchemaCompatibilityChecker({
+			constraints: {
+				IsUuidAsync: async (value) => ({
+					valid:
+						typeof value === "string" &&
+						/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+							value,
+						),
+					message: "Value must be a valid UUID",
+				}),
+				AlwaysFailsAsync: async () => ({
+					valid: false,
+					message: "Always fails (async)",
+				}),
+				ThrowsAsync: async () => {
+					throw new Error("Async validator crashed");
+				},
+			},
+		});
+	});
+
+	test("async validator — valid data passes", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				id: { type: "string", constraints: ["IsUuidAsync"] },
+			},
+			required: ["id"],
+		};
+
+		const result = await asyncChecker.check(schema, schema, {
+			data: { id: "550e8400-e29b-41d4-a716-446655440000" },
+			validate: true,
+		});
+
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toEqual([]);
+	});
+
+	test("async validator — invalid data fails", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				id: { type: "string", constraints: ["IsUuidAsync"] },
+			},
+			required: ["id"],
+		};
+
+		const result = await asyncChecker.check(schema, schema, {
+			data: { id: "not-a-uuid" },
+			validate: true,
+		});
+
+		expect(result.isSubset).toBe(false);
+		expect(result.errors.length).toBeGreaterThan(0);
+		expect(result.errors[0]?.expected).toBe("constraint: IsUuidAsync");
+	});
+
+	test("async validator that throws is caught and reported", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				value: { type: "string", constraints: ["ThrowsAsync"] },
+			},
+			required: ["value"],
+		};
+
+		const result = await asyncChecker.check(schema, schema, {
+			data: { value: "hello" },
+			validate: true,
+		});
+
+		expect(result.isSubset).toBe(false);
+		expect(
+			result.errors.some((e) => e.received === "Async validator crashed"),
+		).toBe(true);
+	});
+
+	test("mixed sync and async validators on same checker", async () => {
+		const mixedChecker = new JsonSchemaCompatibilityChecker({
+			constraints: {
+				SyncValidator: (value) => ({
+					valid: typeof value === "string" && value.length > 0,
+					message: "Must be non-empty string",
+				}),
+				AsyncValidator: async (value) => ({
+					valid: typeof value === "string" && value.startsWith("ok"),
+					message: "Must start with 'ok'",
+				}),
+			},
+		});
+
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				a: { type: "string", constraints: ["SyncValidator"] },
+				b: { type: "string", constraints: ["AsyncValidator"] },
+			},
+			required: ["a", "b"],
+		};
+
+		const validResult = await mixedChecker.check(schema, schema, {
+			data: { a: "hello", b: "ok-fine" },
+			validate: true,
+		});
+		expect(validResult.isSubset).toBe(true);
+
+		const invalidResult = await mixedChecker.check(schema, schema, {
+			data: { a: "hello", b: "nope" },
+			validate: true,
+		});
+		expect(invalidResult.isSubset).toBe(false);
+		expect(
+			invalidResult.errors.some(
+				(e) => e.expected === "constraint: AsyncValidator",
+			),
+		).toBe(true);
+	});
+
+	test("async validator with params", async () => {
+		const paramChecker = new JsonSchemaCompatibilityChecker({
+			constraints: {
+				MinLengthAsync: async (value, params) => {
+					const min = (params?.min as number) ?? 0;
+					return {
+						valid: typeof value === "string" && value.length >= min,
+						message: `Must be at least ${min} characters`,
+					};
+				},
+			},
+		});
+
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				name: {
+					type: "string",
+					constraints: [{ name: "MinLengthAsync", params: { min: 5 } }],
+				},
+			},
+			required: ["name"],
+		};
+
+		const validResult = await paramChecker.check(schema, schema, {
+			data: { name: "Arthur" },
+			validate: true,
+		});
+		expect(validResult.isSubset).toBe(true);
+
+		const invalidResult = await paramChecker.check(schema, schema, {
+			data: { name: "Jo" },
+			validate: true,
+		});
+		expect(invalidResult.isSubset).toBe(false);
+		expect(
+			invalidResult.errors.some(
+				(e) => e.expected === "constraint: MinLengthAsync",
+			),
+		).toBe(true);
+	});
+
+	test("check without validate flag does not trigger async validators", async () => {
+		const sub: JSONSchema7 = {
+			type: "string",
+			constraints: ["AlwaysFailsAsync"],
+		};
+		const sup: JSONSchema7 = {
+			type: "string",
+			constraints: ["AlwaysFailsAsync"],
+		};
+
+		// Without validate: true, constraint validators are NOT called.
+		const result = await asyncChecker.check(sub, sup, { data: "hello" });
+		expect(result.isSubset).toBe(true);
+	});
+
+	test("static check still works with async validators registered", () => {
+		const sub: JSONSchema7 = { type: "string", constraints: ["IsUuidAsync"] };
+		const sup: JSONSchema7 = { type: "string", constraints: ["IsUuidAsync"] };
+
+		// Static check ignores constraints entirely — no async involved
+		expect(asyncChecker.isSubset(sub, sup)).toBe(true);
 	});
 });

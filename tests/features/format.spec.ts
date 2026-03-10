@@ -21,13 +21,13 @@ const _AJV_UNSUPPORTED_FORMATS = new Set([
 	"iri-reference",
 ]);
 
-function expectRuntimeFormatResult(
+async function expectRuntimeFormatResult(
 	format: NonNullable<JSONSchema7["format"]>,
 	value: unknown,
 	expected: boolean,
-): void {
+): Promise<void> {
 	const schema: JSONSchema7 = { type: "string", format };
-	const result = checker.check(schema, schema, {
+	const result = await checker.check(schema, schema, {
 		data: value,
 		validate: true,
 	});
@@ -178,119 +178,127 @@ describe("Enhancement 4 — format validation", () => {
 });
 
 describe("format — runtime validation for every supported format", () => {
-	test("date-time runtime validation", () => {
-		expectRuntimeFormatResult("date-time", "2024-01-15T10:30:00Z", true);
-		expectRuntimeFormatResult("date-time", "not-a-date-time", false);
+	test("date-time runtime validation", async () => {
+		await expectRuntimeFormatResult("date-time", "2024-01-15T10:30:00Z", true);
+		await expectRuntimeFormatResult("date-time", "not-a-date-time", false);
 	});
 
-	test("date runtime validation", () => {
-		expectRuntimeFormatResult("date", "2024-01-15", true);
-		expectRuntimeFormatResult("date", "2024-02-30", false);
+	test("date runtime validation", async () => {
+		await expectRuntimeFormatResult("date", "2024-01-15", true);
+		await expectRuntimeFormatResult("date", "2024-02-30", false);
 	});
 
-	test("time runtime validation", () => {
-		expectRuntimeFormatResult("time", "10:30:00Z", true);
-		expectRuntimeFormatResult("time", "not-a-time", false);
+	test("time runtime validation", async () => {
+		await expectRuntimeFormatResult("time", "10:30:00Z", true);
+		await expectRuntimeFormatResult("time", "not-a-time", false);
 	});
 
-	test("email runtime validation", () => {
-		expectRuntimeFormatResult("email", "test@example.com", true);
-		expectRuntimeFormatResult("email", "not-an-email", false);
+	test("email runtime validation", async () => {
+		await expectRuntimeFormatResult("email", "test@example.com", true);
+		await expectRuntimeFormatResult("email", "not-an-email", false);
 	});
 
-	test("idn-email runtime validation (AJV unsupported — graceful pass)", () => {
+	test("idn-email runtime validation (AJV unsupported — graceful pass)", async () => {
 		// AJV does not natively validate idn-email; it silently ignores the format.
 		// Valid values still pass, invalid values are NOT caught at runtime.
-		expectRuntimeFormatResult("idn-email", "test@example.com", true);
-		expectRuntimeFormatResult("idn-email", "not-an-email", true); // AJV ignores unknown format
+		await expectRuntimeFormatResult("idn-email", "test@example.com", true);
+		await expectRuntimeFormatResult("idn-email", "not-an-email", true); // AJV ignores unknown format
 	});
 
-	test("hostname runtime validation", () => {
-		expectRuntimeFormatResult("hostname", "example.com", true);
-		expectRuntimeFormatResult("hostname", "bad host name", false);
+	test("hostname runtime validation", async () => {
+		await expectRuntimeFormatResult("hostname", "example.com", true);
+		await expectRuntimeFormatResult("hostname", "bad host name", false);
 	});
 
-	test("idn-hostname runtime validation (AJV unsupported — graceful pass)", () => {
+	test("idn-hostname runtime validation (AJV unsupported — graceful pass)", async () => {
 		// AJV does not natively validate idn-hostname; it silently ignores the format.
-		expectRuntimeFormatResult("idn-hostname", "example.com", true);
-		expectRuntimeFormatResult("idn-hostname", "bad host name", true); // AJV ignores unknown format
+		await expectRuntimeFormatResult("idn-hostname", "example.com", true);
+		await expectRuntimeFormatResult("idn-hostname", "bad host name", true); // AJV ignores unknown format
 	});
 
-	test("ipv4 runtime validation", () => {
-		expectRuntimeFormatResult("ipv4", "192.168.1.1", true);
-		expectRuntimeFormatResult("ipv4", "999.999.999.999", false);
+	test("ipv4 runtime validation", async () => {
+		await expectRuntimeFormatResult("ipv4", "192.168.1.1", true);
+		await expectRuntimeFormatResult("ipv4", "999.999.999.999", false);
 	});
 
-	test("ipv6 runtime validation", () => {
-		expectRuntimeFormatResult("ipv6", "2001:db8::1", true);
-		expectRuntimeFormatResult("ipv6", "not-an-ipv6", false);
+	test("ipv6 runtime validation", async () => {
+		await expectRuntimeFormatResult("ipv6", "2001:db8::1", true);
+		await expectRuntimeFormatResult("ipv6", "not-an-ipv6", false);
 	});
 
-	test("uri runtime validation", () => {
-		expectRuntimeFormatResult("uri", "https://example.com/path", true);
-		expectRuntimeFormatResult("uri", "/relative/path", false);
+	test("uri runtime validation", async () => {
+		await expectRuntimeFormatResult("uri", "https://example.com/path", true);
+		await expectRuntimeFormatResult("uri", "/relative/path", false);
 	});
 
-	test("uri-reference runtime validation", () => {
-		expectRuntimeFormatResult(
+	test("uri-reference runtime validation", async () => {
+		await expectRuntimeFormatResult(
 			"uri-reference",
 			"https://example.com/path",
 			true,
 		);
-		expectRuntimeFormatResult("uri-reference", "not a uri reference", false);
+		await expectRuntimeFormatResult(
+			"uri-reference",
+			"not a uri reference",
+			false,
+		);
 	});
 
-	test("iri runtime validation (AJV unsupported — graceful pass)", () => {
+	test("iri runtime validation (AJV unsupported — graceful pass)", async () => {
 		// AJV does not natively validate iri; it silently ignores the format.
-		expectRuntimeFormatResult("iri", "https://example.com/path", true);
-		expectRuntimeFormatResult("iri", "/relative/path", true); // AJV ignores unknown format
+		await expectRuntimeFormatResult("iri", "https://example.com/path", true);
+		await expectRuntimeFormatResult("iri", "/relative/path", true); // AJV ignores unknown format
 	});
 
-	test("iri-reference runtime validation (AJV unsupported — graceful pass)", () => {
+	test("iri-reference runtime validation (AJV unsupported — graceful pass)", async () => {
 		// AJV does not natively validate iri-reference; it silently ignores the format.
-		expectRuntimeFormatResult(
+		await expectRuntimeFormatResult(
 			"iri-reference",
 			"https://example.com/path",
 			true,
 		);
-		expectRuntimeFormatResult("iri-reference", "not a iri reference", true); // AJV ignores unknown format
+		await expectRuntimeFormatResult(
+			"iri-reference",
+			"not a iri reference",
+			true,
+		); // AJV ignores unknown format
 	});
 
-	test("uri-template runtime validation", () => {
-		expectRuntimeFormatResult(
+	test("uri-template runtime validation", async () => {
+		await expectRuntimeFormatResult(
 			"uri-template",
 			"https://example.com/{user}/orders{?id}",
 			true,
 		);
-		expectRuntimeFormatResult(
+		await expectRuntimeFormatResult(
 			"uri-template",
 			"https://example.com/{user",
 			false,
 		);
 	});
 
-	test("uuid runtime validation", () => {
-		expectRuntimeFormatResult(
+	test("uuid runtime validation", async () => {
+		await expectRuntimeFormatResult(
 			"uuid",
 			"123e4567-e89b-12d3-a456-426614174000",
 			true,
 		);
-		expectRuntimeFormatResult("uuid", "not-a-uuid", false);
+		await expectRuntimeFormatResult("uuid", "not-a-uuid", false);
 	});
 
-	test("json-pointer runtime validation", () => {
-		expectRuntimeFormatResult("json-pointer", "/items/0/name", true);
-		expectRuntimeFormatResult("json-pointer", "items/0/name", false);
+	test("json-pointer runtime validation", async () => {
+		await expectRuntimeFormatResult("json-pointer", "/items/0/name", true);
+		await expectRuntimeFormatResult("json-pointer", "items/0/name", false);
 	});
 
-	test("relative-json-pointer runtime validation", () => {
-		expectRuntimeFormatResult("relative-json-pointer", "0#", true);
-		expectRuntimeFormatResult("relative-json-pointer", "#", false);
+	test("relative-json-pointer runtime validation", async () => {
+		await expectRuntimeFormatResult("relative-json-pointer", "0#", true);
+		await expectRuntimeFormatResult("relative-json-pointer", "#", false);
 	});
 
-	test("regex runtime validation", () => {
-		expectRuntimeFormatResult("regex", "^[a-z]+$", true);
-		expectRuntimeFormatResult("regex", "[", false);
+	test("regex runtime validation", async () => {
+		await expectRuntimeFormatResult("regex", "^[a-z]+$", true);
+		await expectRuntimeFormatResult("regex", "[", false);
 	});
 });
 
