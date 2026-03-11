@@ -32,6 +32,35 @@ export interface SubsetResult {
 }
 
 /**
+ * Granular control over which schema(s) runtime validation applies to.
+ *
+ * When provided as an object, each key independently controls whether
+ * runtime validation (AJV + custom constraints) runs against that schema:
+ *   - `sub`: validate `data` against the resolved/narrowed sub schema
+ *   - `sup`: validate `data` against the resolved/narrowed sup schema
+ *
+ * Omitted keys default to `false`.
+ *
+ * @example
+ * ```ts
+ * // Validate only the sup schema (e.g. target input with constraints)
+ * checker.check(sub, sup, { data: {}, validate: { sup: true } });
+ *
+ * // Validate only the sub schema
+ * checker.check(sub, sup, { data: {}, validate: { sub: true } });
+ *
+ * // Validate both (equivalent to `validate: true`)
+ * checker.check(sub, sup, { data: {}, validate: { sub: true, sup: true } });
+ * ```
+ */
+export interface ValidateTargets {
+	/** When `true`, validate `data` against the resolved sub schema */
+	sub?: boolean;
+	/** When `true`, validate `data` against the resolved sup schema */
+	sup?: boolean;
+}
+
+/**
  * Options for runtime-aware subset checking.
  *
  * When `data` is provided, the checker:
@@ -40,31 +69,32 @@ export interface SubsetResult {
  *   2. Narrows schemas using runtime values (e.g. enum materialization)
  *   3. Performs the static subset check on the resolved/narrowed schemas
  *
- * When `validate` is `true`, two additional runtime steps run **after** the
- * static check passes:
- *   4. `data` is validated against both resolved schemas via AJV
- *   5. Custom constraints are validated against `data`
+ * When `validate` is `true` (or an object with `sub`/`sup` flags), additional
+ * runtime steps run **after** the static check passes:
+ *   4. `data` is validated against the targeted resolved schema(s) via AJV
+ *   5. Custom constraints are validated against `data` for the targeted schema(s)
  *
  * `data` can be a partial discriminant (e.g. `{ kind: "text" }`) used solely
  * for condition resolution and narrowing. It does **not** need to be a complete
- * instance of the schemas unless `validate: true` is set.
+ * instance of the schemas unless runtime validation is enabled.
  */
 export interface CheckRuntimeOptions {
 	/** Runtime data used for condition resolution, narrowing, and optionally runtime validation */
 	data: unknown;
 
 	/**
-	 * When `true`, enables runtime validation of `data` against both resolved
-	 * schemas via AJV, and custom constraint validation if a registry was
-	 * provided at construction time.
+	 * Controls runtime validation of `data` against resolved schemas.
 	 *
-	 * When `false` or omitted (default), `data` is used only for condition
-	 * resolution (`if/then/else`) and schema narrowing — no AJV validation
-	 * or constraint validation is performed.
+	 * - `true` — validate against **both** sub and sup schemas (AJV + constraints)
+	 * - `false` / omitted — no runtime validation (data used only for condition
+	 *   resolution and narrowing)
+	 * - `{ sub: true }` — validate only against the sub schema
+	 * - `{ sup: true }` — validate only against the sup schema
+	 * - `{ sub: true, sup: true }` — equivalent to `true`
 	 *
 	 * @default false
 	 */
-	validate?: boolean;
+	validate?: boolean | ValidateTargets;
 }
 
 /**
