@@ -19,4 +19,5 @@ export type {
 	ResolvedSubsetResult,
 	SchemaError,
 	SubsetResult,
+	ValidateTargets,
 } from "./types.ts";

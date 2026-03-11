@@ -30,8 +30,10 @@ import type {
 	ResolvedSubsetResult,
 	SchemaError,
 	SubsetResult,
+	ValidateTargets,
 } from "./types.ts";
 import { deepEqual, isPlainObj } from "./utils.ts";
+import { resolveValidateTargets } from "./validate-targets.ts";
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 
@@ -41,6 +43,7 @@ export type {
 	ResolvedConditionResult,
 	ResolvedSubsetResult,
 	CheckRuntimeOptions,
+	ValidateTargets,
 	BranchType,
 	BranchResult,
 };
@@ -141,10 +144,16 @@ export class JsonSchemaCompatibilityChecker {
 	 *   2. Schemas are narrowed using runtime values (enum materialization)
 	 *   3. The static subset check runs on the resolved/narrowed schemas
 	 *
-	 * When `validate: true` is set in options, two additional runtime steps
-	 * run **after** the static check passes:
-	 *   4. `data` is validated against both resolved schemas via AJV
-	 *   5. Custom constraints are validated against `data`
+	 * When `validate` is enabled, additional runtime steps run **after** the
+	 * static check passes:
+	 *   4. `data` is validated against the targeted resolved schema(s) via AJV
+	 *   5. Custom constraints are validated against `data` for the targeted schema(s)
+	 *
+	 * `validate` accepts:
+	 *   - `true` — validate against **both** sub and sup
+	 *   - `{ sub: true }` — validate only against the sub schema
+	 *   - `{ sup: true }` — validate only against the sup schema
+	 *   - `{ sub: true, sup: true }` — equivalent to `true`
 	 *
 	 * @param sub - The source schema (subset candidate)
 	 * @param sup - The target schema (expected superset)
@@ -273,7 +282,9 @@ export class JsonSchemaCompatibilityChecker {
 		options: CheckRuntimeOptions,
 	): Promise<ResolvedSubsetResult> {
 		const data = options.data;
-		const shouldValidate = options.validate === true;
+		const { sub: validateSub, sup: validateSup } = resolveValidateTargets(
+			options.validate,
+		);
 
 		// resolveConditions expects Record<string, unknown> for property access;
 		// coerce non-object / undefined data to empty object so conditions
@@ -328,53 +339,62 @@ export class JsonSchemaCompatibilityChecker {
 		}
 
 		// ── Runtime validation (opt-in) ──
-		// Only runs when `validate: true` is explicitly set.
-		// Validates the concrete data against both resolved/narrowed schemas
-		// via AJV, then runs custom constraint validators if registered.
-		if (shouldValidate && data !== undefined) {
+		// Runs when `validate` is truthy (boolean or object with sub/sup flags).
+		// Validates the concrete data against the targeted resolved/narrowed
+		// schema(s) via AJV, then runs custom constraint validators if registered.
+		if ((validateSub || validateSup) && data !== undefined) {
 			const runtimeErrors: SchemaError[] = [];
 
-			runtimeErrors.push(
-				...this.prefixRuntimeErrors(
-					getRuntimeValidationErrors(narrowedSubResolved, data),
-					"$sub",
-				),
-			);
+			// ── AJV validation ──
+			if (validateSub) {
+				runtimeErrors.push(
+					...this.prefixRuntimeErrors(
+						getRuntimeValidationErrors(narrowedSubResolved, data),
+						"$sub",
+					),
+				);
+			}
 
-			runtimeErrors.push(
-				...this.prefixRuntimeErrors(
-					getRuntimeValidationErrors(narrowedSupResolved, data),
-					"$sup",
-				),
-			);
+			if (validateSup) {
+				runtimeErrors.push(
+					...this.prefixRuntimeErrors(
+						getRuntimeValidationErrors(narrowedSupResolved, data),
+						"$sup",
+					),
+				);
+			}
 
 			// ── Constraint validation ──
-			// Validate runtime data against custom constraints in both schemas.
-			// Always runs when validate: true — if a schema declares constraints
-			// that are not registered in the registry, validateSchemaConstraints
-			// will report them as "unknown constraint (not registered)" errors.
+			// Validate runtime data against custom constraints in the targeted
+			// schema(s). If a schema declares constraints that are not registered
+			// in the registry, validateSchemaConstraints will report them as
+			// "unknown constraint (not registered)" errors.
 			// Constraint validators may be async, so we await the results.
-			runtimeErrors.push(
-				...this.prefixRuntimeErrors(
-					await validateSchemaConstraints(
-						narrowedSubResolved,
-						data,
-						this.constraintValidators,
+			if (validateSub) {
+				runtimeErrors.push(
+					...this.prefixRuntimeErrors(
+						await validateSchemaConstraints(
+							narrowedSubResolved,
+							data,
+							this.constraintValidators,
+						),
+						"$sub",
 					),
-					"$sub",
-				),
-			);
+				);
+			}
 
-			runtimeErrors.push(
-				...this.prefixRuntimeErrors(
-					await validateSchemaConstraints(
-						narrowedSupResolved,
-						data,
-						this.constraintValidators,
+			if (validateSup) {
+				runtimeErrors.push(
+					...this.prefixRuntimeErrors(
+						await validateSchemaConstraints(
+							narrowedSupResolved,
+							data,
+							this.constraintValidators,
+						),
+						"$sup",
 					),
-					"$sup",
-				),
-			);
+				);
+			}
 
 			if (runtimeErrors.length > 0) {
 				return {
