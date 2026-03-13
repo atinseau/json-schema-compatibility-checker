@@ -13,7 +13,42 @@ declare module "json-schema" {
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
+/**
+ * Discriminant for `SchemaError` — indicates the nature of the incompatibility.
+ *
+ * | Member                 | Description                                                        | Source module(s)           |
+ * |------------------------|--------------------------------------------------------------------|---------------------------|
+ * | `TypeMismatch`         | Incompatible types (e.g. `string` vs `number`, boolean schemas)    | `semantic-errors.ts`       |
+ * | `MissingProperty`      | Required property absent from the source schema                    | `semantic-errors.ts`       |
+ * | `Optionality`          | Property required in target but optional in source                 | `semantic-errors.ts`       |
+ * | `EnumMismatch`         | `enum` / `const` values are incompatible                           | `semantic-errors.ts`       |
+ * | `NumericConstraint`    | `minimum`, `maximum`, `exclusiveMin/Max`, `multipleOf`             | `semantic-errors.ts`       |
+ * | `StringConstraint`     | `minLength`, `maxLength`, `pattern`, `format`                      | `semantic-errors.ts`       |
+ * | `ObjectConstraint`     | `additionalProperties`, `min/maxProperties`, `propertyNames`, etc. | `semantic-errors.ts`       |
+ * | `ArrayConstraint`      | `minItems`, `maxItems`, `uniqueItems`, `contains`                  | `semantic-errors.ts`       |
+ * | `NotSchema`            | Incompatibility on the `not` keyword                               | `semantic-errors.ts`       |
+ * | `BranchMismatch`       | No `anyOf` / `oneOf` branch matches                                | `semantic-errors.ts`       |
+ * | `RuntimeValidation`    | Runtime data invalid against a standard JSON Schema keyword (AJV)  | `runtime-validator.ts`     |
+ * | `CustomConstraint`     | Custom constraint failed, unknown, or threw                        | `constraint-validator.ts`  |
+ */
+export enum SchemaErrorType {
+	TypeMismatch = "type_mismatch",
+	MissingProperty = "missing_property",
+	Optionality = "optionality",
+	EnumMismatch = "enum_mismatch",
+	NumericConstraint = "numeric_constraint",
+	StringConstraint = "string_constraint",
+	ObjectConstraint = "object_constraint",
+	ArrayConstraint = "array_constraint",
+	NotSchema = "not_schema",
+	BranchMismatch = "branch_mismatch",
+	RuntimeValidation = "runtime_validation",
+	CustomConstraint = "custom_constraint",
+}
+
 export interface SchemaError {
+	/** Discriminant indicating the nature of the error */
+	type: SchemaErrorType;
 	/** Normalized path to the concerned property (e.g. "user.name", "users[].name", "accountId") */
 	key: string;
 	/** Type or value expected by the target schema (sup) */

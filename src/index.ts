@@ -22,3 +22,4 @@ export type {
 	ValidateTargetOptions,
 	ValidateTargets,
 } from "./types.ts";
+export { SchemaErrorType } from "./types.ts";

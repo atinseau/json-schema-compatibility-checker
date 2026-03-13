@@ -2,6 +2,7 @@ import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 import type { SchemaError } from "./types.ts";
+import { SchemaErrorType } from "./types.ts";
 import { isPlainObj } from "./utils.ts";
 
 /**
@@ -311,6 +312,7 @@ function buildSchemaError(
 	schema: JSONSchema7,
 	data: unknown,
 ): SchemaError {
+	const type = SchemaErrorType.RuntimeValidation;
 	const baseKey = normalizeInstancePath(error.instancePath);
 
 	if (error.keyword === "required") {
@@ -322,6 +324,7 @@ function buildSchemaError(
 				: "unknown";
 
 		return {
+			type,
 			key:
 				baseKey === "$root" ? missingProperty : `${baseKey}.${missingProperty}`,
 			expected: formatExpected(error, schema),
@@ -338,6 +341,7 @@ function buildSchemaError(
 				: "unknown";
 
 		return {
+			type,
 			key:
 				baseKey === "$root"
 					? additionalProperty
@@ -348,6 +352,7 @@ function buildSchemaError(
 	}
 
 	return {
+		type,
 		key: baseKey,
 		expected: formatExpected(error, schema),
 		received: stringifyValue(data),
@@ -414,6 +419,7 @@ export function getRuntimeValidationErrors(
 
 		return [
 			{
+				type: SchemaErrorType.RuntimeValidation,
 				key: "$root",
 				expected: "never",
 				received: stringifyValue(data),

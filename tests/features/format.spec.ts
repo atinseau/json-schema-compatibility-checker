@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { JSONSchema7 } from "json-schema";
-import { JsonSchemaCompatibilityChecker } from "../../src";
+import { JsonSchemaCompatibilityChecker, SchemaErrorType } from "../../src";
 
 let checker: JsonSchemaCompatibilityChecker;
 
@@ -43,6 +43,7 @@ async function expectRuntimeFormatResult(
 	// so we expect errors prefixed with $sub and $sup.
 	expect(result.errors.length).toBeGreaterThan(0);
 	expect(result.errors[0]).toEqual({
+		type: SchemaErrorType.RuntimeValidation,
 		key: "$sub",
 		expected: `format: ${format}`,
 		received: typeof value === "string" ? value : JSON.stringify(value),
