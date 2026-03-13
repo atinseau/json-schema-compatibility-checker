@@ -32,12 +32,48 @@ export interface SubsetResult {
 }
 
 /**
+ * Per-target validation options.
+ *
+ * When `partial` is `true`, runtime validation strips `required` and
+ * `additionalProperties` constraints at every level of the schema before
+ * passing it to AJV. This allows validating **only the properties present
+ * in `data`** without false negatives on missing required properties or
+ * extra properties not defined in the schema.
+ *
+ * Partial mode applies recursively: nested object schemas also have their
+ * `required` and `additionalProperties` stripped.
+ *
+ * @example
+ * ```ts
+ * // Validate sup in partial mode — only check properties present in data
+ * checker.check(sub, sup, {
+ *   data: { accountId: 'salut' },
+ *   validate: { sup: { partial: true } },
+ * });
+ * ```
+ */
+export interface ValidateTargetOptions {
+	/**
+	 * When `true`, strip `required` and `additionalProperties` from the
+	 * schema before AJV validation so that only properties present in
+	 * `data` are validated.
+	 *
+	 * @default false
+	 */
+	partial?: boolean;
+}
+
+/**
  * Granular control over which schema(s) runtime validation applies to.
  *
  * When provided as an object, each key independently controls whether
  * runtime validation (AJV + custom constraints) runs against that schema:
  *   - `sub`: validate `data` against the resolved/narrowed sub schema
  *   - `sup`: validate `data` against the resolved/narrowed sup schema
+ *
+ * Each target accepts either a boolean or a `ValidateTargetOptions` object.
+ * When `true`, validation runs with default options. When an object is
+ * provided, its flags (e.g. `partial`) customize the validation behavior.
  *
  * Omitted keys default to `false`.
  *
@@ -51,13 +87,19 @@ export interface SubsetResult {
  *
  * // Validate both (equivalent to `validate: true`)
  * checker.check(sub, sup, { data: {}, validate: { sub: true, sup: true } });
+ *
+ * // Validate sup in partial mode (skip required / additionalProperties)
+ * checker.check(sub, sup, {
+ *   data: { accountId: 'salut' },
+ *   validate: { sup: { partial: true } },
+ * });
  * ```
  */
 export interface ValidateTargets {
-	/** When `true`, validate `data` against the resolved sub schema */
-	sub?: boolean;
-	/** When `true`, validate `data` against the resolved sup schema */
-	sup?: boolean;
+	/** When `true` or an options object, validate `data` against the resolved sub schema */
+	sub?: boolean | ValidateTargetOptions;
+	/** When `true` or an options object, validate `data` against the resolved sup schema */
+	sup?: boolean | ValidateTargetOptions;
 }
 
 /**
@@ -91,6 +133,8 @@ export interface CheckRuntimeOptions {
 	 * - `{ sub: true }` — validate only against the sub schema
 	 * - `{ sup: true }` — validate only against the sup schema
 	 * - `{ sub: true, sup: true }` — equivalent to `true`
+	 * - `{ sup: { partial: true } }` — validate sup in partial mode
+	 *   (skip `required` / `additionalProperties` enforcement)
 	 *
 	 * @default false
 	 */

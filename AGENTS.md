@@ -58,25 +58,26 @@ The CI pipeline (`.github/workflows/ci.yml`) runs: check-types → biome check �
 src/
 ├── index.ts                          # Public re-exports (entry point)
 ├── json-schema-compatibility-checker.ts  # Main facade class (JsonSchemaCompatibilityChecker)
-├── types.ts                          # Public interfaces: SubsetResult, SchemaError, ResolvedConditionResult, ConstraintValidator, CheckerOptions
+├── types.ts                          # Public interfaces: SubsetResult, SchemaError, ResolvedConditionResult, ValidateTargets, ValidateTargetOptions, ConstraintValidator, CheckerOptions
 ├── merge-engine.ts                   # MergeEngine: allOf merge (intersection) + overlay (deep spread) + conflict detection (wraps @x0k/json-schema-merge)
 ├── subset-checker.ts                 # Core subset logic: isAtomicSubsetOf, evaluateNot, getBranchesTyped, checkAtomic/Branched, nested branching fallback (hasNestedBranching, isPropertySubsetOf, isObjectSubsetByProperties, tryNestedBranchingFallback)
 ├── normalizer.ts                     # Schema normalizer: infer type from const/enum, double-negation resolution, constraints canonicalization, recursive normalization
 ├── condition-resolver.ts             # if/then/else resolution with discriminant data, allOf condition handling, delegates evaluation to runtime-validator
-├── runtime-validator.ts              # AJV-based runtime validation: isDataValidForSchema, getRuntimeValidationErrors (singleton AJV instance with LRU + WeakMap caching)
+├── runtime-validator.ts              # AJV-based runtime validation: isDataValidForSchema, getRuntimeValidationErrors, getPartialRuntimeValidationErrors, stripRequiredRecursive (singleton AJV instance with LRU + WeakMap caching)
 ├── constraint-validator.ts           # Custom constraint validation: validateSchemaConstraints (recurses into properties, items, patternProperties, additionalProperties, dependencies)
 ├── data-narrowing.ts                 # Narrows a schema using runtime data when the target has enum/const constraints
 ├── semantic-errors.ts                # Human-readable error generation: computeSemanticErrors, comparePropertySchemas, checkCustomConstraints, formatSchemaType (with constraints suffix)
 ├── format-validator.ts               # Format validation (email, uri, date-time...) + format hierarchy (FORMAT_SUPERSETS)
 ├── pattern-subset.ts                 # Regex pattern subset via sampling (isPatternSubset, arePatternsEquivalent)
 ├── formatter.ts                      # formatResult() for debug output
+├── validate-targets.ts               # Normalizes `validate` option into per-schema flags (sub/sup enabled + partial mode)
 └── utils.ts                          # Shared utilities: deepEqual, isPlainObj, hasOwn, omitKeys, unionStrings, mergeConstraints, toConstraintArray
 
 global.d.ts                           # Module augmentation: extends JSONSchema7 with `constraints?: Constraints`
 
 tests/
 ├── core/           # Tests for main API methods: isSubset, check, check-connection, intersect, isEqual, normalize, semantic-errors, edge-cases, constraint-validators, runtime-validator-cache
-├── features/       # Tests per JSON Schema feature: type-system, const-enum, not, pattern, format, anyOf/oneOf, object-properties, data-narrowing, contains-items, dependencies, property-names
+├── features/       # Tests per JSON Schema feature: type-system, const-enum, not, pattern, format, anyOf/oneOf, object-properties, data-narrowing, contains-items, dependencies, property-names, partial-validation
 ├── conditions/     # Tests for if/then/else resolution, evaluateCondition, resolve-conditions
 ├── merge-engine/   # Tests for the merge engine: types, keywords, enum-const, advanced merges, overlay (deep spread), merge-constraints
 ├── bugs/           # Regression tests for specific bug fixes
@@ -105,30 +106,35 @@ sub, sup → normalize() → getBranchesTyped() → [if branched] per-branch che
                                                                       → getBranchesTyped() + isAtomicSubsetOf()
 
 With options (runtime mode — returns Promise<ResolvedSubsetResult>):
-sub, sup, { data } → resolveConditions(sub, data)          ← uses isDataValidForSchema (AJV)
-                    → resolveConditions(sup, data)          ← uses isDataValidForSchema (AJV)
-                    → narrowSchemaWithData(resolvedSub, data, resolvedSup)
-                    → narrowSchemaWithData(resolvedSup, data, resolvedSub)
-                    → checkInternal(narrowedSub, narrowedSup)     ← structural subset check
-                    → [if static check fails] return { isSubset: false, errors }
-                    → getRuntimeValidationErrors(narrowedSub, data)  ← AJV validation
-                    → getRuntimeValidationErrors(narrowedSup, data)  ← AJV validation
-                    → await validateSchemaConstraints(narrowedSub, data, registry)  ← custom constraints (async)
-                    → await validateSchemaConstraints(narrowedSup, data, registry)  ← custom constraints (async)
-                    → [if runtime errors] return { isSubset: false, errors }
-                    → [if all pass] return { isSubset: true, ... }
+sub, sup, { data, validate } → resolveValidateTargets(validate)     ← extract sub/sup/partialSub/partialSup flags
+                              → resolveConditions(sub, data)          ← uses isDataValidForSchema (AJV)
+                              → resolveConditions(sup, data)          ← uses isDataValidForSchema (AJV)
+                              → narrowSchemaWithData(resolvedSub, data, resolvedSup)
+                              → narrowSchemaWithData(resolvedSup, data, resolvedSub)
+                              → checkInternal(narrowedSub, narrowedSup)     ← structural subset check
+                              → [if static check fails] return { isSubset: false, errors }
+                              → [if validateSub] getRuntimeValidationErrors(narrowedSub, data)
+                                                 or getPartialRuntimeValidationErrors(narrowedSub, data) if partialSub
+                              → [if validateSup] getRuntimeValidationErrors(narrowedSup, data)
+                                                 or getPartialRuntimeValidationErrors(narrowedSup, data) if partialSup
+                              → [if validateSub] await validateSchemaConstraints(narrowedSub, data, registry)
+                              → [if validateSup] await validateSchemaConstraints(narrowedSup, data, registry)
+                              → [if runtime errors] return { isSubset: false, errors }
+                              → [if all pass] return { isSubset: true, ... }
 ```
 
 ### Runtime Validator (`runtime-validator.ts`)
 
-Centralizes all AJV-based runtime validation behind a singleton AJV instance (module-level, shared across all checker instances). Two main exports:
+Centralizes all AJV-based runtime validation behind a singleton AJV instance (module-level, shared across all checker instances). Four main exports:
 
 | Function | Purpose |
 |---|---|
 | `isDataValidForSchema(schema, data)` | Boolean validation — used by `condition-resolver.ts` for `if/then/else` evaluation (replaces the former hand-rolled `evaluateCondition` logic) |
-| `getRuntimeValidationErrors(schema, data)` | Returns `SchemaError[]` — used by the facade's `check()` runtime path for data-level validation |
+| `getRuntimeValidationErrors(schema, data)` | Returns `SchemaError[]` — used by the facade's `check()` runtime path for full data-level validation |
+| `getPartialRuntimeValidationErrors(schema, data)` | Returns `SchemaError[]` — like `getRuntimeValidationErrors` but strips `required` and `additionalProperties` before AJV compilation so only present properties are validated |
+| `stripRequiredRecursive(schema)` | Returns a new schema with `required` and `additionalProperties` removed recursively (into `properties`, `items`, `oneOf`/`anyOf`/`allOf`, `then`/`else`). Used internally by `getPartialRuntimeValidationErrors`. Copy-on-write — never mutates input. |
 
-Caching strategy: **WeakMap** by schema object reference (primary, zero-cost for repeated calls with same schema instance) + **LRU Map** (bounded to 500 entries) keyed by deterministic `stableStringify` (fallback for structurally identical schemas with different references).
+Caching strategy: **WeakMap** by schema object reference (primary, zero-cost for repeated calls with same schema instance) + **LRU Map** (bounded to 500 entries) keyed by deterministic `stableStringify` (fallback for structurally identical schemas with different references). Note: `getPartialRuntimeValidationErrors` creates a stripped copy of the schema before compilation — the stripped schema is a new object, so it goes through the LRU string cache path (not the WeakMap). This is acceptable because partial validation is used less frequently than full validation.
 
 ### Constraint Validator (`constraint-validator.ts`)
 
@@ -189,6 +195,7 @@ const converged = engine.merge(pathAContext, pathBContext);
 9. **Singleton AJV instance.** `runtime-validator.ts` uses a module-level AJV singleton shared across all `JsonSchemaCompatibilityChecker` instances. This is intentional for performance (compiled validators are reused). AJV is configured with `strict: false` to tolerate unknown keywords like `constraints`. Do NOT create per-instance AJV — it would break the caching strategy.
 10. **Custom constraints are runtime-only.** The `constraints` keyword is **completely ignored** in the static path: `normalize()` strips it from schemas before subset checking, the merge engine does not handle it, and semantic errors never report constraint mismatches. Constraints are only evaluated at runtime via `validateSchemaConstraints()` when `check()` is called with `{ data, validate: true }` and constraint validators are registered. The condition resolver (`mergeBranchInto`) still unions constraints during `if/then/else` resolution so that the resolved schema preserves them for runtime validation. The merge engine and condition resolver share `mergeConstraints` / `toConstraintArray` from `utils.ts`.
 11. **`check()` with options is async.** When `check(sub, sup, options)` is called with `CheckRuntimeOptions`, it returns `Promise<ResolvedSubsetResult>` (not a synchronous result). This is because constraint validators can be async (`ConstraintValidator` returns `ConstraintValidationResult | Promise<ConstraintValidationResult>`). The overload without options (`check(sub, sup)`) remains synchronous and returns `SubsetResult`. Callers must `await` the runtime path.
+12. **Partial validation mode.** `validate` targets (`sub`/`sup`) accept either `boolean` or `{ partial?: boolean }`. When `partial: true`, the runtime validator calls `stripRequiredRecursive` on the schema before AJV compilation — this removes `required` and `additionalProperties` at every object level so that AJV only validates properties **present** in `data`. This is for design-time scenarios where only some property values are known. The constraint validator (`validateSchemaConstraints`) already skips absent properties naturally (via its `if (propValue === undefined && !hasOwn(dataObj, key)) continue` guard), so it requires no special handling for partial mode. The `resolveValidateTargets` function in `validate-targets.ts` normalizes the `validate` option into `{ sub, sup, partialSub, partialSup }` booleans consumed by `checkWithOptions`.
 
 ## Code Conventions
 

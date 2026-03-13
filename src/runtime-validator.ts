@@ -2,6 +2,7 @@ import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 import type { SchemaError } from "./types.ts";
+import { isPlainObj } from "./utils.ts";
 
 /**
  * ─── Runtime Validator ────────────────────────────────────────────────────────
@@ -432,6 +433,107 @@ export function getRuntimeValidationErrors(
 	}
 
 	return validate.errors.map((error) => buildSchemaError(error, schema, data));
+}
+
+// ─── Partial Validation ──────────────────────────────────────────────────────
+//
+// Strips `required` and `additionalProperties` from a schema recursively so
+// that AJV only validates the properties **present** in the data — without
+// reporting missing required properties or unexpected additional properties.
+//
+// This is used by the "partial" runtime validation mode: the caller has
+// partial data (e.g. only some properties known at design-time) and wants to
+// validate those values against the schema without false negatives for
+// properties that will be provided later by another source.
+
+/**
+ * Recursively strips `required` and `additionalProperties` from an
+ * object-typed JSON Schema so that AJV validates only the properties
+ * present in the data.
+ *
+ * Recurses into: `properties`, `items` (single + tuple), `oneOf`, `anyOf`,
+ * `allOf`, `then`, `else`.
+ *
+ * @param schema - The schema to strip (not mutated — returns a new object)
+ * @returns A new schema without `required` or `additionalProperties` at any level
+ */
+export function stripRequiredRecursive(schema: JSONSchema7): JSONSchema7 {
+	if (!isPlainObj(schema)) return schema;
+
+	const result: JSONSchema7 = { ...schema };
+	delete result.required;
+	delete result.additionalProperties;
+
+	// ── Recurse into properties ──
+	if (isPlainObj(result.properties)) {
+		const props: Record<string, JSONSchema7Definition> = {};
+		for (const [key, value] of Object.entries(
+			result.properties as Record<string, JSONSchema7Definition>,
+		)) {
+			props[key] =
+				typeof value === "object" && value !== null
+					? stripRequiredRecursive(value)
+					: value;
+		}
+		result.properties = props;
+	}
+
+	// ── Recurse into items (single schema) ──
+	if (isPlainObj(result.items) && !Array.isArray(result.items)) {
+		result.items = stripRequiredRecursive(result.items as JSONSchema7);
+	}
+
+	// ── Recurse into tuple items ──
+	if (Array.isArray(result.items)) {
+		result.items = (result.items as JSONSchema7Definition[]).map((item) =>
+			typeof item === "object" && item !== null
+				? stripRequiredRecursive(item)
+				: item,
+		);
+	}
+
+	// ── Recurse into branching keywords ──
+	for (const keyword of ["oneOf", "anyOf", "allOf"] as const) {
+		if (Array.isArray(result[keyword])) {
+			result[keyword] = (result[keyword] as JSONSchema7Definition[]).map(
+				(branch) =>
+					typeof branch === "object" && branch !== null
+						? stripRequiredRecursive(branch)
+						: branch,
+			);
+		}
+	}
+
+	// ── Recurse into conditional keywords ──
+	if (isPlainObj(result.then)) {
+		result.then = stripRequiredRecursive(result.then as JSONSchema7);
+	}
+	if (isPlainObj(result.else)) {
+		result.else = stripRequiredRecursive(result.else as JSONSchema7);
+	}
+
+	return result;
+}
+
+/**
+ * Returns AJV validation errors for partial data — strips `required` and
+ * `additionalProperties` before compilation so that only the properties
+ * **present** in `data` are validated.
+ *
+ * @param schema - The schema to validate against (not mutated)
+ * @param data - The partial runtime data
+ * @returns Normalized runtime validation errors for present properties only
+ */
+export function getPartialRuntimeValidationErrors(
+	schema: JSONSchema7Definition,
+	data: unknown,
+): SchemaError[] {
+	if (typeof schema === "boolean") {
+		return getRuntimeValidationErrors(schema, data);
+	}
+
+	const stripped = stripRequiredRecursive(schema);
+	return getRuntimeValidationErrors(stripped, data);
 }
 
 /**

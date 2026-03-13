@@ -1,5 +1,15 @@
 # Cas d'usage concrets
 
+## Sommaire
+
+- [Connexion de nœuds dans un orchestrateur](#connexion-de-nœuds-dans-un-orchestrateur)
+- [Validation de réponse API](#validation-de-réponse-api)
+- [Union discriminée](#union-discriminée)
+- [Formulaire conditionnel](#formulaire-conditionnel)
+- [Validation partielle — données connues au design-time](#validation-partielle--données-connues-au-design-time)
+
+---
+
 ## Connexion de nœuds dans un orchestrateur
 
 Le cas d'usage principal de la librairie : dans un système d'orchestration visuel (style n8n, Node-RED, Zapier), vérifier que la sortie d'un nœud est compatible avec l'entrée du suivant.
@@ -238,4 +248,137 @@ const personalResult = checker.check(personalOutput, formSchema, {
 });
 console.log(personalResult.isSubset);          // true ✅
 console.log(personalResult.resolvedSup.branch); // "else"
+```
+
+---
+
+## Validation partielle — données connues au design-time
+
+Dans un orchestrateur, il est fréquent de connaître **certaines** valeurs de propriétés au moment du design (ex. un `accountId` sélectionné par l'utilisateur), tandis que les autres propriétés seront fournies par d'autres sources au runtime. On veut valider les valeurs connues (enum, format, contraintes custom) **sans** faux négatifs sur les propriétés manquantes.
+
+Le mode `partial` résout ce problème : il supprime `required` et `additionalProperties` du schema avant la validation AJV, de sorte que seules les propriétés **présentes** dans `data` sont validées.
+
+```ts
+const checker = new JsonSchemaCompatibilityChecker({
+  constraints: {
+    AccountExists: async (value) => {
+      const exists = await checkAccountInDatabase(value as string);
+      return { valid: exists, message: "Account not found" };
+    },
+  },
+});
+
+const nodeInput = {
+  type: "object",
+  properties: {
+    accountId: {
+      type: "string",
+      enum: ["acc-001", "acc-002", "acc-003"],
+      constraints: ["AccountExists"],
+    },
+    meetingId: { type: "string" },
+    extraField: { type: "number" },
+  },
+  required: ["accountId", "meetingId", "extraField"],
+};
+
+// Au design-time, seul accountId est connu.
+// meetingId et extraField seront fournis par d'autres nœuds au runtime.
+const partialData = { accountId: "acc-001" };
+```
+
+### Sans `partial` — faux négatifs sur les propriétés manquantes
+
+```ts
+const result = await checker.check(nodeInput, nodeInput, {
+  data: partialData,
+  validate: { sup: true },
+});
+
+console.log(result.errors);
+// [
+//   { key: "$sup.meetingId", expected: "meetingId: string", received: "undefined" },
+//   { key: "$sup.extraField", expected: "extraField: number", received: "undefined" },
+// ]
+// ❌ Faux négatifs — meetingId et extraField ne sont pas encore disponibles
+```
+
+### Avec `partial: true` — validation des valeurs présentes uniquement
+
+```ts
+const result = await checker.check(nodeInput, nodeInput, {
+  data: partialData,
+  validate: { sup: { partial: true } },
+});
+
+console.log(result.isSubset); // true ✅
+console.log(result.errors);   // []
+// ✅ accountId est dans l'enum → OK
+// ✅ La contrainte AccountExists est évaluée → OK
+// ✅ meetingId et extraField absents → ignorés (mode partial)
+```
+
+### Données partielles avec valeur invalide
+
+```ts
+const result = await checker.check(nodeInput, nodeInput, {
+  data: { accountId: "bad_value" },
+  validate: { sup: { partial: true } },
+});
+
+console.log(result.errors);
+// [
+//   { key: "$sup.accountId", expected: "acc-001, acc-002, or acc-003", received: "bad_value" }
+// ]
+// ✅ Seule l'erreur enum pour la propriété présente
+// ✅ Pas d'erreurs pour meetingId ou extraField
+```
+
+### Mode partial récursif — objets imbriqués
+
+Le mode `partial` s'applique récursivement : les `required` et `additionalProperties` sont supprimés à **chaque niveau** de profondeur.
+
+```ts
+const schema = {
+  type: "object",
+  properties: {
+    user: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        role: { type: "string", enum: ["admin", "user"] },
+      },
+      required: ["name", "role"],
+    },
+    meetingId: { type: "string" },
+  },
+  required: ["user", "meetingId"],
+};
+
+const result = await checker.check(schema, schema, {
+  data: { user: { role: "invalid_role" } },
+  validate: { sup: { partial: true } },
+});
+
+console.log(result.errors);
+// [
+//   { key: "$sup.user.role", expected: "admin or user", received: "invalid_role" }
+// ]
+// ✅ meetingId manquant au root → pas vérifié
+// ✅ user.name manquant dans l'objet imbriqué → pas vérifié
+// ✅ user.role présent avec une valeur invalide → erreur rapportée
+```
+
+### Utilisation mixte — partial sur sup, full sur sub
+
+On peut combiner le mode partial sur un target et le mode complet sur l'autre :
+
+```ts
+const result = await checker.check(sub, sup, {
+  data: partialData,
+  validate: {
+    sub: true,                  // validation complète (required, additionalProperties)
+    sup: { partial: true },     // validation partielle (uniquement les propriétés présentes)
+  },
+});
 ```

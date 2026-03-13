@@ -306,15 +306,41 @@ check(
   sub: JSONSchema7Definition,
   sup: JSONSchema7Definition,
   options: CheckRuntimeOptions
-): ResolvedSubsetResult
+): Promise<ResolvedSubsetResult>
 ```
 
-Runtime-aware subset check. Resolves `if/then/else` conditions in both schemas, validates the data against the resolved schemas, narrows schemas using runtime values, then performs the static subset check.
+Runtime-aware subset check. Resolves `if/then/else` conditions in both schemas, narrows schemas using runtime values, performs the static subset check, then optionally validates the data against the resolved schemas via AJV and custom constraints.
 
 ```ts
 interface CheckRuntimeOptions {
-  /** Concrete runtime instance — used for condition resolution, validation, and narrowing */
+  /** Runtime data used for condition resolution, narrowing, and optionally runtime validation */
   data: unknown;
+
+  /**
+   * Controls runtime validation of data against resolved schemas.
+   *
+   * - `true` — validate against both sub and sup schemas (AJV + constraints)
+   * - `false` / omitted — no runtime validation (data used only for condition resolution and narrowing)
+   * - `{ sub: true }` — validate only against the sub schema
+   * - `{ sup: true }` — validate only against the sup schema
+   * - `{ sub: true, sup: true }` — equivalent to `true`
+   * - `{ sup: { partial: true } }` — validate sup in partial mode
+   *
+   * @default false
+   */
+  validate?: boolean | ValidateTargets;
+}
+
+interface ValidateTargets {
+  /** When true or an options object, validate data against the resolved sub schema */
+  sub?: boolean | ValidateTargetOptions;
+  /** When true or an options object, validate data against the resolved sup schema */
+  sup?: boolean | ValidateTargetOptions;
+}
+
+interface ValidateTargetOptions {
+  /** When true, strip required and additionalProperties before AJV validation */
+  partial?: boolean;
 }
 
 interface ResolvedSubsetResult extends SubsetResult {
@@ -331,12 +357,83 @@ The checker executes the following pipeline:
 |------|-------------|
 | 1. **Condition resolution** | `if/then/else` in both `sub` and `sup` are resolved using `data` |
 | 2. **Narrowing** | Schemas are narrowed using runtime values (e.g. enum materialization: `{ type: "string" }` + `data = "red"` → `{ type: "string", const: "red" }`) |
-| 3. **Runtime validation** | `data` is validated against both resolved schemas via AJV. If validation fails → `isSubset: false` with errors prefixed `$sub` or `$sup` |
-| 4. **Static subset check** | If validation passes, the standard merge-based subset check runs on the resolved/narrowed schemas |
+| 3. **Static subset check** | The standard merge-based subset check runs on the resolved/narrowed schemas. Static errors surface with higher priority. |
+| 4. **Runtime validation** (opt-in) | When `validate` is enabled, `data` is validated against the targeted resolved schema(s) via AJV, then custom constraints are evaluated. |
 
-### Important: `data` is a concrete runtime instance
+### `validate` option — controlling runtime validation
 
-`data` is **not** a partial discriminant — it's a real value that must validate against both schemas. If `data` is missing required fields or violates constraints, runtime validation catches it and returns `isSubset: false`.
+By default (`validate` omitted or `false`), `data` is used **only** for condition resolution and narrowing — no AJV validation runs.
+
+When `validate` is enabled, the checker validates `data` against the targeted schema(s):
+
+```ts
+// No runtime validation — data used only for condition resolution + narrowing
+checker.check(sub, sup, { data: myData });
+
+// Validate against both sub and sup
+checker.check(sub, sup, { data: myData, validate: true });
+
+// Validate only the sup schema
+checker.check(sub, sup, { data: myData, validate: { sup: true } });
+
+// Validate only the sub schema
+checker.check(sub, sup, { data: myData, validate: { sub: true } });
+```
+
+### Partial validation mode
+
+When you have **partial data** (e.g. only some properties known at design-time), standard runtime validation fails on missing `required` properties. The `partial` option tells the validator to strip `required` and `additionalProperties` before AJV compilation, so that only the properties **present** in `data` are validated:
+
+```ts
+const sup = {
+  type: "object",
+  properties: {
+    accountId: { type: "string", enum: ["salut", "coucou"] },
+    meetingId: { type: "string" },
+    extraField: { type: "number" },
+  },
+  required: ["accountId", "meetingId", "extraField"],
+};
+
+// ❌ Full mode: fails on missing meetingId and extraField
+const result = await checker.check(sup, sup, {
+  data: { accountId: "salut" },
+  validate: { sup: true },
+});
+// errors: [{ key: "$sup.meetingId", ... }, { key: "$sup.extraField", ... }]
+
+// ✅ Partial mode: validates only accountId (present in data)
+const result = await checker.check(sup, sup, {
+  data: { accountId: "salut" },
+  validate: { sup: { partial: true } },
+});
+// errors: [] — accountId is valid, missing properties are ignored
+
+// ✅ Partial mode still catches invalid values on present properties
+const result = await checker.check(sup, sup, {
+  data: { accountId: "bad_value" },
+  validate: { sup: { partial: true } },
+});
+// errors: [{ key: "$sup.accountId", expected: "salut or coucou", received: "bad_value" }]
+```
+
+Partial mode applies **recursively** — nested object schemas also have their `required` and `additionalProperties` stripped. Custom constraint validators already handle partial data correctly (they skip properties not present in data), so constraints are evaluated normally regardless of partial mode.
+
+You can mix partial and full mode across targets:
+
+```ts
+// Partial on sup, full on sub
+checker.check(sub, sup, {
+  data: partialData,
+  validate: { sub: true, sup: { partial: true } },
+});
+
+// Partial on both
+checker.check(sub, sup, {
+  data: partialData,
+  validate: { sub: { partial: true }, sup: { partial: true } },
+});
+```
 
 ### Example — Resolving conditions with complete data
 
@@ -372,8 +469,8 @@ const sub = {
 // Without resolution: false (if/then/else in sup causes merge mismatch)
 console.log(checker.isSubset(sub, conditionalSup)); // false
 
-// With runtime data: true! Data resolves conditions AND validates against both schemas.
-const result = checker.check(sub, conditionalSup, {
+// With runtime data: true! Data resolves conditions.
+const result = await checker.check(sub, conditionalSup, {
   data: { kind: "text", value: "hello" },
 });
 console.log(result.isSubset);          // true ✅
@@ -384,12 +481,20 @@ console.log(result.resolvedSup.branch); // "then"
 
 ```ts
 // Data is missing `value` — both schemas require it.
-// Runtime validation catches the missing field → isSubset: false
-const result = checker.check(sub, conditionalSup, {
+// With validate: true, runtime validation catches the missing field → isSubset: false
+const result = await checker.check(sub, conditionalSup, {
   data: { kind: "text" },
+  validate: true,
 });
 console.log(result.isSubset);  // false
 console.log(result.errors);    // [{ key: "$sub.value", expected: "...", received: "undefined" }, ...]
+
+// With partial mode, missing `value` would NOT cause an error:
+const partialResult = await checker.check(sub, conditionalSup, {
+  data: { kind: "text" },
+  validate: { sub: { partial: true }, sup: { partial: true } },
+});
+console.log(partialResult.isSubset);  // true ✅
 ```
 
 ### Example — Business form with conditional required fields
@@ -427,13 +532,14 @@ const businessOutput = {
 };
 
 // Complete business instance validates against both schemas
-const result = checker.check(businessOutput, formSchema, {
+const result = await checker.check(businessOutput, formSchema, {
   data: {
     accountType: "business",
     email: "ceo@acme.com",
     companyName: "ACME Corp",
     taxId: "123-456-789",
   },
+  validate: true,
 });
 console.log(result.isSubset); // true ✅
 ```
@@ -444,11 +550,11 @@ console.log(result.isSubset); // true ✅
 const schema = { type: "string", format: "email" };
 
 // Valid email → isSubset: true (A ⊆ A with valid data)
-const r1 = checker.check(schema, schema, { data: "test@example.com" });
+const r1 = await checker.check(schema, schema, { data: "test@example.com", validate: true });
 console.log(r1.isSubset); // true
 
 // Invalid email → isSubset: false (runtime validation fails)
-const r2 = checker.check(schema, schema, { data: "not-an-email" });
+const r2 = await checker.check(schema, schema, { data: "not-an-email", validate: true });
 console.log(r2.isSubset); // false
 console.log(r2.errors);   // [{ key: "$sub", expected: "format: email", received: "not-an-email" }, ...]
 ```
@@ -459,8 +565,14 @@ console.log(r2.errors);   // [{ key: "$sub", expected: "format: email", received
 // Static mode — no runtime data, purely structural
 checker.check(sub, sup);
 
-// Runtime mode — data influences resolution, validation, and narrowing
+// Runtime mode — condition resolution + narrowing only (no AJV validation)
 checker.check(sub, sup, { data: concreteInstance });
+
+// Runtime mode — full pipeline including AJV + constraint validation
+checker.check(sub, sup, { data: concreteInstance, validate: true });
+
+// Runtime mode — validate only sup in partial mode
+checker.check(sub, sup, { data: partialData, validate: { sup: { partial: true } } });
 ```
 
 ---
