@@ -1,5 +1,6 @@
 import type { JSONSchema7, JSONSchema7Definition } from "json-schema";
 import type { SchemaError } from "./types.ts";
+import { SchemaErrorType } from "./types.ts";
 import { deepEqual, hasOwn, isPlainObj } from "./utils.ts";
 
 // ─── Semantic Error Generator ────────────────────────────────────────────────
@@ -288,10 +289,12 @@ function checkMinConstraint(
 	name: string,
 	path: string,
 	errors: SchemaError[],
+	type: SchemaErrorType,
 ): void {
 	if (supVal !== undefined) {
 		if (subVal === undefined || subVal < supVal) {
 			errors.push({
+				type,
 				key: path || "$root",
 				expected: fmtConstraint(name, supVal),
 				received: fmtConstraint(name, subVal),
@@ -310,10 +313,12 @@ function checkMaxConstraint(
 	name: string,
 	path: string,
 	errors: SchemaError[],
+	type: SchemaErrorType,
 ): void {
 	if (supVal !== undefined) {
 		if (subVal === undefined || subVal > supVal) {
 			errors.push({
+				type,
 				key: path || "$root",
 				expected: fmtConstraint(name, supVal),
 				received: fmtConstraint(name, subVal),
@@ -331,14 +336,29 @@ function checkNumericConstraints(
 	path: string,
 	errors: SchemaError[],
 ): void {
-	checkMinConstraint(sub.minimum, sup.minimum, "minimum", path, errors);
-	checkMaxConstraint(sub.maximum, sup.maximum, "maximum", path, errors);
+	checkMinConstraint(
+		sub.minimum,
+		sup.minimum,
+		"minimum",
+		path,
+		errors,
+		SchemaErrorType.NumericConstraint,
+	);
+	checkMaxConstraint(
+		sub.maximum,
+		sup.maximum,
+		"maximum",
+		path,
+		errors,
+		SchemaErrorType.NumericConstraint,
+	);
 	checkMinConstraint(
 		sub.exclusiveMinimum as number | undefined,
 		sup.exclusiveMinimum as number | undefined,
 		"exclusiveMinimum",
 		path,
 		errors,
+		SchemaErrorType.NumericConstraint,
 	);
 	checkMaxConstraint(
 		sub.exclusiveMaximum as number | undefined,
@@ -346,11 +366,13 @@ function checkNumericConstraints(
 		"exclusiveMaximum",
 		path,
 		errors,
+		SchemaErrorType.NumericConstraint,
 	);
 
 	if (sup.multipleOf !== undefined) {
 		if (sub.multipleOf === undefined) {
 			errors.push({
+				type: SchemaErrorType.NumericConstraint,
 				key: path || "$root",
 				expected: fmtConstraint("multipleOf", sup.multipleOf),
 				received: fmtConstraint("multipleOf", sub.multipleOf),
@@ -359,6 +381,7 @@ function checkNumericConstraints(
 			// sub.multipleOf must be a multiple of sup.multipleOf for sub ⊆ sup
 			if (sub.multipleOf % sup.multipleOf !== 0) {
 				errors.push({
+					type: SchemaErrorType.NumericConstraint,
 					key: path || "$root",
 					expected: fmtConstraint("multipleOf", sup.multipleOf),
 					received: fmtConstraint("multipleOf", sub.multipleOf),
@@ -377,13 +400,28 @@ function checkStringConstraints(
 	path: string,
 	errors: SchemaError[],
 ): void {
-	checkMinConstraint(sub.minLength, sup.minLength, "minLength", path, errors);
-	checkMaxConstraint(sub.maxLength, sup.maxLength, "maxLength", path, errors);
+	checkMinConstraint(
+		sub.minLength,
+		sup.minLength,
+		"minLength",
+		path,
+		errors,
+		SchemaErrorType.StringConstraint,
+	);
+	checkMaxConstraint(
+		sub.maxLength,
+		sup.maxLength,
+		"maxLength",
+		path,
+		errors,
+		SchemaErrorType.StringConstraint,
+	);
 
 	// ── Pattern ──
 	if (sup.pattern !== undefined) {
 		if (sub.pattern === undefined) {
 			errors.push({
+				type: SchemaErrorType.StringConstraint,
 				key: path || "$root",
 				expected: fmtConstraint("pattern", sup.pattern),
 				received: "no pattern constraint",
@@ -394,6 +432,7 @@ function checkStringConstraints(
 			// The subset checker may have already stripped equivalent patterns,
 			// so if we get here, they're genuinely different.
 			errors.push({
+				type: SchemaErrorType.StringConstraint,
 				key: path || "$root",
 				expected: fmtConstraint("pattern", sup.pattern),
 				received: fmtConstraint("pattern", sub.pattern),
@@ -405,12 +444,14 @@ function checkStringConstraints(
 	if (sup.format !== undefined && sub.format !== sup.format) {
 		if (sub.format === undefined) {
 			errors.push({
+				type: SchemaErrorType.StringConstraint,
 				key: path || "$root",
 				expected: fmtConstraint("format", sup.format),
 				received: "no format constraint",
 			});
 		} else {
 			errors.push({
+				type: SchemaErrorType.StringConstraint,
 				key: path || "$root",
 				expected: fmtConstraint("format", sup.format),
 				received: fmtConstraint("format", sub.format),
@@ -438,6 +479,7 @@ function checkObjectConstraints(
 			) {
 				// sub allows them → incompatible
 				errors.push({
+					type: SchemaErrorType.ObjectConstraint,
 					key: path || "$root",
 					expected: "additionalProperties: false",
 					received: "additional properties allowed",
@@ -448,6 +490,7 @@ function checkObjectConstraints(
 			) {
 				// sub has a schema for additional properties → still allows them
 				errors.push({
+					type: SchemaErrorType.ObjectConstraint,
 					key: path || "$root",
 					expected: "additionalProperties: false",
 					received: "additionalProperties: schema",
@@ -464,6 +507,7 @@ function checkObjectConstraints(
 			) {
 				// sub allows anything → more permissive
 				errors.push({
+					type: SchemaErrorType.ObjectConstraint,
 					key: path || "$root",
 					expected: `additionalProperties: ${formatSchemaType(sup.additionalProperties as JSONSchema7Definition)}`,
 					received: "additional properties allowed",
@@ -493,6 +537,7 @@ function checkObjectConstraints(
 		"minProperties",
 		path,
 		errors,
+		SchemaErrorType.ObjectConstraint,
 	);
 	checkMaxConstraint(
 		sub.maxProperties,
@@ -500,12 +545,14 @@ function checkObjectConstraints(
 		"maxProperties",
 		path,
 		errors,
+		SchemaErrorType.ObjectConstraint,
 	);
 
 	// ── propertyNames ──
 	if (sup.propertyNames !== undefined) {
 		if (sub.propertyNames === undefined) {
 			errors.push({
+				type: SchemaErrorType.ObjectConstraint,
 				key: path || "$root",
 				expected: `propertyNames: ${formatSchemaType(sup.propertyNames)}`,
 				received: "no propertyNames constraint",
@@ -539,12 +586,14 @@ function checkObjectConstraints(
 				// sup requires a dependency that sub doesn't have
 				if (Array.isArray(supDep)) {
 					errors.push({
+						type: SchemaErrorType.ObjectConstraint,
 						key: path || "$root",
 						expected: `dependency: ${key} requires ${supDep.join(", ")}`,
 						received: `no dependency for ${key}`,
 					});
 				} else {
 					errors.push({
+						type: SchemaErrorType.ObjectConstraint,
 						key: path || "$root",
 						expected: `dependency: ${key} requires schema`,
 						received: `no dependency for ${key}`,
@@ -555,6 +604,7 @@ function checkObjectConstraints(
 				const missing = supDep.filter((d) => !subDep.includes(d));
 				if (missing.length > 0) {
 					errors.push({
+						type: SchemaErrorType.ObjectConstraint,
 						key: path || "$root",
 						expected: `dependency: ${key} requires ${supDep.join(", ")}`,
 						received: `dependency: ${key} requires ${subDep.join(", ")}`,
@@ -574,6 +624,7 @@ function checkObjectConstraints(
 			} else {
 				// Mixed forms (one array, one schema) — report mismatch
 				errors.push({
+					type: SchemaErrorType.ObjectConstraint,
 					key: path || "$root",
 					expected: Array.isArray(supDep)
 						? `dependency: ${key} requires ${supDep.join(", ")}`
@@ -608,6 +659,7 @@ function checkObjectConstraints(
 			if (subPropDef === undefined) {
 				// sub doesn't constrain this pattern at all — more permissive
 				errors.push({
+					type: SchemaErrorType.ObjectConstraint,
 					key: ppPath,
 					expected: formatSchemaType(supPropDef),
 					received: "no constraint for this pattern",
@@ -630,12 +682,27 @@ function checkArrayConstraints(
 	path: string,
 	errors: SchemaError[],
 ): void {
-	checkMinConstraint(sub.minItems, sup.minItems, "minItems", path, errors);
-	checkMaxConstraint(sub.maxItems, sup.maxItems, "maxItems", path, errors);
+	checkMinConstraint(
+		sub.minItems,
+		sup.minItems,
+		"minItems",
+		path,
+		errors,
+		SchemaErrorType.ArrayConstraint,
+	);
+	checkMaxConstraint(
+		sub.maxItems,
+		sup.maxItems,
+		"maxItems",
+		path,
+		errors,
+		SchemaErrorType.ArrayConstraint,
+	);
 
 	// ── uniqueItems ──
 	if (sup.uniqueItems === true && sub.uniqueItems !== true) {
 		errors.push({
+			type: SchemaErrorType.ArrayConstraint,
 			key: path || "$root",
 			expected: "uniqueItems: true",
 			received: fmtConstraint("uniqueItems", sub.uniqueItems ?? false),
@@ -646,6 +713,7 @@ function checkArrayConstraints(
 	if (sup.contains !== undefined) {
 		if (sub.contains === undefined) {
 			errors.push({
+				type: SchemaErrorType.ArrayConstraint,
 				key: path || "$root",
 				expected: `contains: ${formatSchemaType(sup.contains as JSONSchema7Definition)}`,
 				received: "no contains constraint",
@@ -765,6 +833,7 @@ export function computeSemanticErrors(
 		if (sup === false) {
 			return [
 				{
+					type: SchemaErrorType.TypeMismatch,
 					key: path || "$root",
 					expected: "never",
 					received: formatSchemaType(sub),
@@ -777,6 +846,7 @@ export function computeSemanticErrors(
 		if (sub === true) {
 			return [
 				{
+					type: SchemaErrorType.TypeMismatch,
 					key: path || "$root",
 					expected: formatSchemaType(sup),
 					received: "any",
@@ -806,6 +876,7 @@ export function computeSemanticErrors(
 		if (!hasOwn(subSchema, "not")) {
 			// sup excludes something, sub doesn't → sub is more permissive
 			errors.push({
+				type: SchemaErrorType.NotSchema,
 				key: path || "$root",
 				expected: `not ${notFormatted}`,
 				received: formatSchemaType(subSchema),
@@ -820,6 +891,7 @@ export function computeSemanticErrors(
 			const subNotSchema = subSchema.not as JSONSchema7;
 			if (!deepEqual(subNotSchema, notSchema)) {
 				errors.push({
+					type: SchemaErrorType.NotSchema,
 					key: path || "$root",
 					expected: `not ${notFormatted}`,
 					received: `not ${formatSchemaType(subNotSchema)}`,
@@ -859,6 +931,7 @@ export function computeSemanticErrors(
 		if (subType !== undefined && !typeIncludes(subType, "object")) {
 			// sub is not an object at all
 			errors.push({
+				type: SchemaErrorType.TypeMismatch,
 				key: path || "$root",
 				expected: formatSchemaType(supSchema),
 				received: formatSchemaType(subSchema),
@@ -883,6 +956,7 @@ export function computeSemanticErrors(
 				if (subPropDef === undefined) {
 					if (isRequiredInSup) {
 						errors.push({
+							type: SchemaErrorType.MissingProperty,
 							key: propPath,
 							expected: formatSchemaType(supPropDef),
 							received: "undefined",
@@ -894,6 +968,7 @@ export function computeSemanticErrors(
 				// ── Optionality mismatch (required in sup, optional in sub) ──
 				if (isRequiredInSup && !subRequired.includes(key)) {
 					errors.push({
+						type: SchemaErrorType.Optionality,
 						key: propPath,
 						expected: "not optional",
 						received: "optional",
@@ -941,6 +1016,7 @@ export function computeSemanticErrors(
 						const itemPath = joinPath(path, `[${i}]`);
 						if (supItem !== undefined && subItem === undefined) {
 							errors.push({
+								type: SchemaErrorType.MissingProperty,
 								key: itemPath,
 								expected: formatSchemaType(supItem),
 								received: "undefined",
@@ -965,6 +1041,7 @@ export function computeSemanticErrors(
 			} else {
 				// sup has items schema but sub doesn't
 				errors.push({
+					type: SchemaErrorType.TypeMismatch,
 					key: path || "$root",
 					expected: formatSchemaType(supSchema),
 					received: formatSchemaType(subSchema),
@@ -982,6 +1059,7 @@ export function computeSemanticErrors(
 	if (subType !== undefined && supType !== undefined) {
 		if (!typesAreCompatible(subType, supType)) {
 			errors.push({
+				type: SchemaErrorType.TypeMismatch,
 				key: path || "$root",
 				expected: formatSchemaType(supSchema),
 				received: formatSchemaType(subSchema),
@@ -999,6 +1077,7 @@ export function computeSemanticErrors(
 			);
 			if (subExtra.length > 0) {
 				errors.push({
+					type: SchemaErrorType.EnumMismatch,
 					key: path || "$root",
 					expected: formatEnumValues(supSchema.enum),
 					received: formatEnumValues(subSchema.enum),
@@ -1011,6 +1090,7 @@ export function computeSemanticErrors(
 			);
 			if (!constInEnum) {
 				errors.push({
+					type: SchemaErrorType.EnumMismatch,
 					key: path || "$root",
 					expected: formatEnumValues(supSchema.enum),
 					received: formatSchemaType(subSchema),
@@ -1019,6 +1099,7 @@ export function computeSemanticErrors(
 		} else {
 			// sup has enum but sub is a plain type (no enum restriction)
 			errors.push({
+				type: SchemaErrorType.EnumMismatch,
 				key: path || "$root",
 				expected: formatEnumValues(supSchema.enum),
 				received: formatSchemaType(subSchema),
@@ -1031,6 +1112,7 @@ export function computeSemanticErrors(
 	if (hasOwn(supSchema, "const") && hasOwn(subSchema, "const")) {
 		if (!deepEqual(supSchema.const, subSchema.const)) {
 			errors.push({
+				type: SchemaErrorType.EnumMismatch,
 				key: path || "$root",
 				expected: formatSchemaType(supSchema),
 				received: formatSchemaType(subSchema),
@@ -1093,6 +1175,7 @@ export function computeSemanticErrors(
 	const receivedStr = formatSchemaType(subSchema);
 	if (expectedStr !== receivedStr) {
 		errors.push({
+			type: SchemaErrorType.TypeMismatch,
 			key: path || "$root",
 			expected: expectedStr,
 			received: receivedStr,
@@ -1117,6 +1200,7 @@ function comparePropertySchemas(
 		if (subDef !== supDef) {
 			return [
 				{
+					type: SchemaErrorType.TypeMismatch,
 					key: path,
 					expected: formatSchemaType(supDef),
 					received: formatSchemaType(subDef),
@@ -1141,6 +1225,7 @@ function comparePropertySchemas(
 			if (subExtra.length > 0) {
 				return [
 					{
+						type: SchemaErrorType.EnumMismatch,
 						key: path,
 						expected: formatEnumValues(supSchema.enum),
 						received: formatEnumValues(subSchema.enum),
@@ -1156,6 +1241,7 @@ function comparePropertySchemas(
 			if (!constInEnum) {
 				return [
 					{
+						type: SchemaErrorType.EnumMismatch,
 						key: path,
 						expected: formatEnumValues(supSchema.enum),
 						received: formatSchemaType(subSchema),
@@ -1167,6 +1253,7 @@ function comparePropertySchemas(
 		// sup has enum, sub is a plain type
 		return [
 			{
+				type: SchemaErrorType.EnumMismatch,
 				key: path,
 				expected: formatEnumValues(supSchema.enum),
 				received: formatSchemaType(subSchema),
@@ -1179,6 +1266,7 @@ function comparePropertySchemas(
 		if (!deepEqual(supSchema.const, subSchema.const)) {
 			return [
 				{
+					type: SchemaErrorType.EnumMismatch,
 					key: path,
 					expected: formatSchemaType(supSchema),
 					received: formatSchemaType(subSchema),
@@ -1193,6 +1281,7 @@ function comparePropertySchemas(
 		if (!typesAreCompatible(subType, supType)) {
 			return [
 				{
+					type: SchemaErrorType.TypeMismatch,
 					key: path,
 					expected: formatSchemaType(supSchema),
 					received: formatSchemaType(subSchema),
@@ -1232,6 +1321,7 @@ function computeErrorsAgainstBranches(
 	return (
 		bestErrors ?? [
 			{
+				type: SchemaErrorType.BranchMismatch,
 				key: path || "$root",
 				expected: formatSchemaType({ anyOf: branches } as JSONSchema7),
 				received: formatSchemaType(sub),

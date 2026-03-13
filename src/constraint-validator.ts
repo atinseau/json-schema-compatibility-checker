@@ -4,6 +4,7 @@ import type {
 	ConstraintValidatorRegistry,
 	SchemaError,
 } from "./types.ts";
+import { SchemaErrorType } from "./types.ts";
 import { hasOwn, isPlainObj, toConstraintArray } from "./utils.ts";
 
 // ─── Constraint Validator ────────────────────────────────────────────────────
@@ -40,8 +41,9 @@ async function validateValue(
 
 		if (!validator) {
 			errors.push({
+				type: SchemaErrorType.CustomConstraint,
 				key: path || "$root",
-				expected: `constraint: ${name}`,
+				expected: name,
 				received: "unknown constraint (not registered)",
 			});
 			continue;
@@ -51,15 +53,17 @@ async function validateValue(
 			const result = await validator(value, params);
 			if (!result.valid) {
 				errors.push({
+					type: SchemaErrorType.CustomConstraint,
 					key: path || "$root",
-					expected: `constraint: ${name}`,
+					expected: name,
 					received: result.message ?? "constraint validation failed",
 				});
 			}
 		} catch (err) {
 			errors.push({
+				type: SchemaErrorType.CustomConstraint,
 				key: path || "$root",
-				expected: `constraint: ${name}`,
+				expected: name,
 				received:
 					err instanceof Error ? err.message : "constraint validation error",
 			});

@@ -33,6 +33,7 @@ import type {
 	SubsetResult,
 	ValidateTargets,
 } from "./types.ts";
+import { SchemaErrorType } from "./types.ts";
 import { deepEqual, isPlainObj } from "./utils.ts";
 import { resolveValidateTargets } from "./validate-targets.ts";
 
@@ -50,6 +51,7 @@ export type {
 };
 
 export {
+	SchemaErrorType,
 	normalize,
 	resolveConditions,
 	formatResult,

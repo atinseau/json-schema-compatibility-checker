@@ -270,7 +270,7 @@ describe("constraint validator — runtime validation", () => {
 		expect(result.errors).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
-					expected: "constraint: IsUuid",
+					expected: "IsUuid",
 					received: "unknown constraint (not registered)",
 				}),
 			]),
@@ -809,7 +809,7 @@ describe("constraint validator — async validators", () => {
 
 		expect(result.isSubset).toBe(false);
 		expect(result.errors.length).toBeGreaterThan(0);
-		expect(result.errors[0]?.expected).toBe("constraint: IsUuidAsync");
+		expect(result.errors[0]?.expected).toBe("IsUuidAsync");
 	});
 
 	test("async validator that throws is caught and reported", async () => {
@@ -867,9 +867,7 @@ describe("constraint validator — async validators", () => {
 		});
 		expect(invalidResult.isSubset).toBe(false);
 		expect(
-			invalidResult.errors.some(
-				(e) => e.expected === "constraint: AsyncValidator",
-			),
+			invalidResult.errors.some((e) => e.expected === "AsyncValidator"),
 		).toBe(true);
 	});
 
@@ -909,9 +907,7 @@ describe("constraint validator — async validators", () => {
 		});
 		expect(invalidResult.isSubset).toBe(false);
 		expect(
-			invalidResult.errors.some(
-				(e) => e.expected === "constraint: MinLengthAsync",
-			),
+			invalidResult.errors.some((e) => e.expected === "MinLengthAsync"),
 		).toBe(true);
 	});
 

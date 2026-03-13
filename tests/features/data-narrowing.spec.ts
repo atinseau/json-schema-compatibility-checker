@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { JSONSchema7 } from "json-schema";
 import type { ResolvedSubsetResult } from "../../src";
-import { JsonSchemaCompatibilityChecker } from "../../src";
+import { JsonSchemaCompatibilityChecker, SchemaErrorType } from "../../src";
 
 let checker: JsonSchemaCompatibilityChecker;
 
@@ -155,6 +155,7 @@ describe("data narrowing — runtime validation (validate: true)", () => {
 		expect(result.isSubset).toBe(false);
 		expect(result.errors).toEqual([
 			{
+				type: SchemaErrorType.RuntimeValidation,
 				key: "$sub",
 				expected: "minLength: 5",
 				received: "a",
@@ -179,11 +180,13 @@ describe("data narrowing — runtime validation (validate: true)", () => {
 		// Since both are the same schema, both produce an error.
 		expect(result.errors).toEqual([
 			{
+				type: SchemaErrorType.RuntimeValidation,
 				key: "$sub",
 				expected: "red, green, or blue",
 				received: "Je ne suis pas une couleur",
 			},
 			{
+				type: SchemaErrorType.RuntimeValidation,
 				key: "$sup",
 				expected: "red, green, or blue",
 				received: "Je ne suis pas une couleur",
