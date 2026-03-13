@@ -12,6 +12,7 @@ import {
 } from "./pattern-subset.ts";
 import {
 	clearAllValidatorCaches,
+	getPartialRuntimeValidationErrors,
 	getRuntimeValidationErrors,
 } from "./runtime-validator.ts";
 import type { BranchResult, BranchType } from "./subset-checker.ts";
@@ -282,9 +283,12 @@ export class JsonSchemaCompatibilityChecker {
 		options: CheckRuntimeOptions,
 	): Promise<ResolvedSubsetResult> {
 		const data = options.data;
-		const { sub: validateSub, sup: validateSup } = resolveValidateTargets(
-			options.validate,
-		);
+		const {
+			sub: validateSub,
+			sup: validateSup,
+			partialSub,
+			partialSup,
+		} = resolveValidateTargets(options.validate);
 
 		// resolveConditions expects Record<string, unknown> for property access;
 		// coerce non-object / undefined data to empty object so conditions
@@ -346,19 +350,29 @@ export class JsonSchemaCompatibilityChecker {
 			const runtimeErrors: SchemaError[] = [];
 
 			// ── AJV validation ──
+			// When partial mode is active for a target, use
+			// getPartialRuntimeValidationErrors which strips `required` and
+			// `additionalProperties` before AJV compilation so that only
+			// the properties present in data are validated.
 			if (validateSub) {
+				const getErrors = partialSub
+					? getPartialRuntimeValidationErrors
+					: getRuntimeValidationErrors;
 				runtimeErrors.push(
 					...this.prefixRuntimeErrors(
-						getRuntimeValidationErrors(narrowedSubResolved, data),
+						getErrors(narrowedSubResolved, data),
 						"$sub",
 					),
 				);
 			}
 
 			if (validateSup) {
+				const getErrors = partialSup
+					? getPartialRuntimeValidationErrors
+					: getRuntimeValidationErrors;
 				runtimeErrors.push(
 					...this.prefixRuntimeErrors(
-						getRuntimeValidationErrors(narrowedSupResolved, data),
+						getErrors(narrowedSupResolved, data),
 						"$sup",
 					),
 				);

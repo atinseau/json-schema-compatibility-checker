@@ -232,15 +232,79 @@ engine.overlay(node1Output, node2Output);
 When `check()` is called with `{ data }`, the library uses [AJV](https://ajv.js.org/) (JSON Schema validator) to:
 
 1. **Resolve `if/then/else` conditions** — evaluates the `if` schema against the data to determine which branch applies
-2. **Validate data against both resolved schemas** — catches data-level violations (wrong format, out of range, etc.)
+2. **Narrow schemas** using runtime values (e.g. enum materialization)
+3. **Perform the static subset check** on the resolved/narrowed schemas
+4. **Validate data against targeted resolved schemas** (opt-in via `validate`) — catches data-level violations (wrong format, out of range, etc.)
+5. **Validate custom constraints** against data for targeted schemas (opt-in via `validate`)
 
 ```ts
+// Resolve conditions + narrowing only (no runtime validation)
 const result = checker.check(sub, sup, {
   data: { kind: "email", value: "test@example.com" },
 });
-// result.isSubset — structural compatibility
+
+// Full pipeline including AJV + constraint runtime validation on both schemas
+const result = checker.check(sub, sup, {
+  data: { kind: "email", value: "test@example.com" },
+  validate: true,
+});
+// result.isSubset — structural compatibility + runtime validation
 // result.errors   — includes runtime validation errors prefixed with $sub / $sup
 ```
+
+### Validate targets
+
+The `validate` option controls **which schemas** undergo runtime validation:
+
+```ts
+// Validate both sub and sup (equivalent to validate: true)
+checker.check(sub, sup, { data, validate: { sub: true, sup: true } });
+
+// Validate only the sup schema (e.g. target input with constraints)
+checker.check(sub, sup, { data, validate: { sup: true } });
+
+// Validate only the sub schema
+checker.check(sub, sup, { data, validate: { sub: true } });
+```
+
+### Partial validation mode
+
+When you have **partial data** (e.g. only some properties known at design-time), standard runtime validation fails on missing `required` properties and `additionalProperties` constraints. The `partial` option strips these constraints before AJV validation so that only the properties **present** in data are validated:
+
+```ts
+const sup = {
+  type: "object",
+  properties: {
+    accountId: { type: "string", enum: ["salut", "coucou"] },
+    meetingId: { type: "string" },
+    extraField: { type: "number" },
+  },
+  required: ["accountId", "meetingId", "extraField"],
+};
+
+// ❌ Without partial: fails on missing meetingId and extraField
+const result = await checker.check(sup, sup, {
+  data: { accountId: "salut" },
+  validate: { sup: true },
+});
+// errors: meetingId missing, extraField missing
+
+// ✅ With partial: validates only accountId (present in data)
+const result = await checker.check(sup, sup, {
+  data: { accountId: "salut" },
+  validate: { sup: { partial: true } },
+});
+// errors: [] — accountId is valid, missing properties are ignored
+
+// ✅ Partial still catches invalid values on present properties
+const result = await checker.check(sup, sup, {
+  data: { accountId: "bad_value" },
+  validate: { sup: { partial: true } },
+});
+// errors: [{ key: "$sup.accountId", expected: "salut or coucou", received: "bad_value" }]
+```
+
+Partial mode applies recursively to nested objects and works with `oneOf`/`anyOf` branches, `if/then/else` conditions, and array items. Custom constraint validators already handle partial data correctly (they skip properties not present in data), so constraints are evaluated normally regardless of partial mode.
 
 ### Custom `constraints` keyword
 
@@ -295,7 +359,7 @@ Constraints are handled at three levels:
 | **[Features Guide](./docs/features-guide.md)** | Complete feature tour: types, `required`, numeric constraints, `enum`/`const`, `anyOf`/`oneOf`, `not`, `format`, `pattern`, `if/then/else` conditions, `allOf`, custom `constraints`... |
 | **[Utility Functions](./docs/utilities.md)** | `isPatternSubset`, `arePatternsEquivalent`, `isTrivialPattern` |
 | **[Use Cases](./docs/use-cases.md)** | Node connection, sequential pipeline (overlay), API response validation, discriminated unions, conditional forms |
-| **[Exported Types](./docs/types.md)** | `SubsetResult`, `SchemaError`, `ResolvedConditionResult`, `ResolvedSubsetResult`, `CheckRuntimeOptions`, `ConstraintValidator`, `CheckerOptions` |
+| **[Exported Types](./docs/types.md)** | `SubsetResult`, `SchemaError`, `ResolvedConditionResult`, `ResolvedSubsetResult`, `CheckRuntimeOptions`, `ValidateTargets`, `ValidateTargetOptions`, `ConstraintValidator`, `CheckerOptions` |
 | **[Known Limitations](./docs/limitations.md)** | Cross-keyword constraints, `oneOf` exclusivity, probabilistic patterns, `$ref` not supported |
 | **[Internal Architecture](./docs/architecture.md)** | Module diagram, verification flow, merge vs overlay, dependencies |
 
