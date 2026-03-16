@@ -164,17 +164,17 @@ describe("isSubset", () => {
 		).toBe(true);
 	});
 
-	test("known limitation: cross-keyword constraints (exclusiveMinimum vs minimum) produce false negative", () => {
-		// Semantically {exclusiveMinimum: 5} ⊆ {minimum: 0} is true (x>5 implies x≥0)
-		// But the merge adds minimum:0 from sup, making merged ≠ sub structurally.
-		// This is a known limitation of the structural intersection approach:
-		// it cannot reason across different-but-related keywords.
+	test("cross-keyword constraints: exclusiveMinimum vs minimum (fixed by stripRedundantBoundsFromSup)", () => {
+		// Semantically {exclusiveMinimum: 5} ⊆ {minimum: 0} is true (x>5 implies x≥0).
+		// Previously this was a false negative because the merge added minimum:0 from sup,
+		// making merged ≠ sub structurally. Now stripRedundantBoundsFromSup strips the
+		// redundant sup.minimum before the merge when sub.exclusiveMinimum >= sup.minimum.
 		expect(
 			checker.isSubset(
 				{ type: "number", exclusiveMinimum: 5 },
 				{ type: "number", minimum: 0 },
 			),
-		).toBe(false);
+		).toBe(true);
 	});
 
 	test("multipleOf: multiple of 6 ⊆ multiple of 3", () => {

@@ -1362,12 +1362,36 @@ export function computeSemanticErrors(
 	const expectedStr = formatSchemaType(supSchema);
 	const receivedStr = formatSchemaType(subSchema);
 	if (expectedStr !== receivedStr) {
-		errors.push({
-			type: SchemaErrorType.TypeMismatch,
-			key: path || "$root",
-			expected: expectedStr,
-			received: receivedStr,
-		});
+		// Do not report type_mismatch when:
+		//   - sub has an enum (formatting as "active or pending")
+		//   - sup has a `not` constraint that is confirmed satisfied (notResult === true)
+		//   - the base types are compatible
+		//
+		// In this scenario the only source of incompatibility was the `not` keyword,
+		// which is confirmed to be satisfied by sub's enum values. The textual
+		// representations differ ("active or pending" vs "string") solely because
+		// formatSchemaType renders enum values rather than their declared type —
+		// there is no actual semantic incompatibility.
+		const supNotSatisfied =
+			hasOwn(supSchema, "not") &&
+			isPlainObj(supSchema.not) &&
+			isNotSatisfied(subSchema, supSchema) === true;
+
+		const isEnumCompatibleWithSupNot =
+			Array.isArray(subSchema.enum) &&
+			supSchema.type !== undefined &&
+			subSchema.type !== undefined &&
+			typesAreCompatible(subSchema.type, supSchema.type) &&
+			supNotSatisfied;
+
+		if (!isEnumCompatibleWithSupNot) {
+			errors.push({
+				type: SchemaErrorType.TypeMismatch,
+				key: path || "$root",
+				expected: expectedStr,
+				received: receivedStr,
+			});
+		}
 	}
 
 	return errors;

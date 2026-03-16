@@ -504,3 +504,193 @@ describe("Bug 3 — check() mixed exclusive/inclusive bounds", () => {
 		}
 	});
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Bug 4 — `allOf` + `not`: resolveSupAllOf pre-flattens allOf in sup
+//
+//  When sup uses allOf with a branch containing `not`, the allOf is resolved
+//  by the merge engine during merge(sub, sup), but the stripping pipeline
+//  (stripNotFromSup, etc.) runs BEFORE the merge on the raw sup — it cannot
+//  see keywords nested inside allOf branches.
+//
+//  Fix: resolveSupAllOf pre-flattens the allOf before the stripping pipeline
+//  so that stripNotFromSup can see and remove the `not` from properties.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("Bug 4 — allOf + not in sup", () => {
+	// ── Basic: allOf with not branch, sub enum disjoint from not ──
+	test("check() ⊆ true when sup is allOf with not branch and sub enum is disjoint", () => {
+		const result = checker.check(
+			{
+				type: "object",
+				properties: {
+					role: { type: "string", enum: ["admin", "user"] },
+				},
+				required: ["role"],
+			},
+			{
+				allOf: [
+					{
+						type: "object",
+						properties: { role: { type: "string" } },
+						required: ["role"],
+					},
+					{
+						type: "object",
+						properties: { role: { not: { const: "guest" } } },
+					},
+				],
+			},
+		);
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toEqual([]);
+	});
+
+	// ── Negative: sub enum contains the forbidden value ──
+	test("check() ⊆ false when sup is allOf with not branch and sub enum contains forbidden value", () => {
+		const result = checker.check(
+			{
+				type: "object",
+				properties: {
+					role: { type: "string", enum: ["admin", "guest"] },
+				},
+				required: ["role"],
+			},
+			{
+				allOf: [
+					{
+						type: "object",
+						properties: { role: { type: "string" } },
+						required: ["role"],
+					},
+					{
+						type: "object",
+						properties: { role: { not: { const: "guest" } } },
+					},
+				],
+			},
+		);
+		expect(result.isSubset).toBe(false);
+	});
+
+	// ── isSubset() agrees with check() ──
+	test("isSubset() and check() agree for allOf + not", () => {
+		const sub: JSONSchema7 = {
+			type: "object",
+			properties: {
+				role: { type: "string", enum: ["admin", "user"] },
+			},
+			required: ["role"],
+		};
+		const sup: JSONSchema7 = {
+			allOf: [
+				{
+					type: "object",
+					properties: { role: { type: "string" } },
+					required: ["role"],
+				},
+				{
+					type: "object",
+					properties: { role: { not: { const: "guest" } } },
+				},
+			],
+		};
+		const isSubsetResult = checker.isSubset(sub, sup);
+		const checkResult = checker.check(sub, sup);
+		expect(isSubsetResult).toBe(checkResult.isSubset);
+		expect(isSubsetResult).toBe(true);
+	});
+
+	// ── allOf with not enum (not just not const) ──
+	test("check() ⊆ true when sup is allOf with not enum branch", () => {
+		const result = checker.check(
+			{
+				type: "object",
+				properties: {
+					status: { type: "string", enum: ["active", "pending"] },
+				},
+				required: ["status"],
+			},
+			{
+				allOf: [
+					{
+						type: "object",
+						properties: { status: { type: "string" } },
+						required: ["status"],
+					},
+					{
+						type: "object",
+						properties: {
+							status: { not: { enum: ["deleted", "archived"] } },
+						},
+					},
+				],
+			},
+		);
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toEqual([]);
+	});
+
+	// ── allOf with sibling keywords alongside allOf ──
+	test("check() ⊆ true when sup has sibling keywords alongside allOf", () => {
+		const result = checker.check(
+			{
+				type: "object",
+				properties: {
+					role: { type: "string", enum: ["admin"] },
+				},
+				required: ["role"],
+			},
+			{
+				type: "object",
+				allOf: [
+					{
+						type: "object",
+						properties: { role: { type: "string" } },
+						required: ["role"],
+					},
+					{
+						type: "object",
+						properties: { role: { not: { const: "guest" } } },
+					},
+				],
+			},
+		);
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toEqual([]);
+	});
+
+	// ── allOf with three branches ──
+	test("check() ⊆ true when sup is allOf with three branches including not", () => {
+		const result = checker.check(
+			{
+				type: "object",
+				properties: {
+					role: { type: "string", enum: ["admin"] },
+					name: { type: "string", minLength: 3 },
+				},
+				required: ["role", "name"],
+			},
+			{
+				allOf: [
+					{
+						type: "object",
+						properties: { role: { type: "string" } },
+						required: ["role"],
+					},
+					{
+						type: "object",
+						properties: { role: { not: { const: "guest" } } },
+					},
+					{
+						type: "object",
+						properties: { name: { type: "string", minLength: 1 } },
+						required: ["name"],
+					},
+				],
+			},
+		);
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toEqual([]);
+	});
+});
