@@ -677,14 +677,49 @@ function stripRedundantBoundsFromSup(
 		keysToStrip.push("exclusiveMaximum");
 	}
 
-	if (keysToStrip.length > 0) {
-		return omitKeys(
-			sup as unknown as Record<string, unknown>,
-			keysToStrip,
-		) as JSONSchema7;
+	// ── Top-level stripping ────────────────────────────────────
+	let result: JSONSchema7Definition =
+		keysToStrip.length > 0
+			? (omitKeys(
+					sup as unknown as Record<string, unknown>,
+					keysToStrip,
+				) as JSONSchema7)
+			: sup;
+
+	// ── Recurse into properties ────────────────────────────────
+	const resultObj = result as JSONSchema7;
+	if (isPlainObj(resultObj.properties) && isPlainObj(sub.properties)) {
+		const subProps = sub.properties as Record<string, JSONSchema7Definition>;
+		const supProps = resultObj.properties as Record<
+			string,
+			JSONSchema7Definition
+		>;
+		let newProps: Record<string, JSONSchema7Definition> | undefined;
+
+		for (const key of Object.keys(supProps)) {
+			const supProp = supProps[key];
+			const subProp = subProps[key];
+
+			if (
+				supProp !== undefined &&
+				subProp !== undefined &&
+				typeof supProp !== "boolean" &&
+				typeof subProp !== "boolean"
+			) {
+				const stripped = stripRedundantBoundsFromSup(subProp, supProp);
+				if (stripped !== supProp) {
+					if (!newProps) newProps = { ...supProps };
+					newProps[key] = stripped;
+				}
+			}
+		}
+
+		if (newProps) {
+			result = { ...resultObj, properties: newProps };
+		}
 	}
 
-	return sup;
+	return result;
 }
 
 /**
