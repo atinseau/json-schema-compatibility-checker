@@ -6,8 +6,8 @@
       "name": "json-schema-compatibility-checker",
       "dependencies": {
         "@x0k/json-schema-merge": "1.0.2",
-        "ajv": "^8.18.0",
-        "ajv-formats": "^3.0.1",
+        "ajv": "8.18.0",
+        "ajv-formats": "3.0.1",
         "class-validator": "0.14.3",
         "randexp": "0.5.3",
       },
