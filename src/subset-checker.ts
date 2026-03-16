@@ -1154,10 +1154,24 @@ export function checkBranchedSup(
 	_branchType: BranchType = "anyOf",
 ): SubsetResult {
 	for (const branch of supBranches) {
-		// Strip patterns confirmed by sampling before the merge
+		// Strip not + patterns confirmed by sampling before the merge
 		let effectiveBranch = branch;
 		if (typeof sub !== "boolean" && typeof branch !== "boolean") {
-			effectiveBranch = stripPatternFromSup(sub, branch);
+			const notResult = evaluateNot(sub, branch);
+			if (notResult === false) continue; // This branch rejects sub
+
+			if (notResult === true) {
+				effectiveBranch = stripNotFromSup(sub, branch, true);
+				if (
+					typeof effectiveBranch !== "boolean" &&
+					Object.keys(effectiveBranch).length === 0
+				) {
+					return { isSubset: true, merged: sub, errors: [] };
+				}
+			} else {
+				effectiveBranch = stripNotFromSup(sub, branch, false);
+			}
+			effectiveBranch = stripPatternFromSup(sub, effectiveBranch);
 		}
 		const merged = engine.merge(sub, effectiveBranch);
 		if (merged !== null) {
@@ -1201,12 +1215,36 @@ export function checkAtomic(
 	sup: JSONSchema7Definition,
 	engine: MergeEngine,
 ): SubsetResult {
-	// Strip patterns confirmed by sampling before the merge,
+	// ── evaluateNot pre-check (aligned with isAtomicSubsetOf) ──
+	const notResult =
+		typeof sub !== "boolean" && typeof sup !== "boolean"
+			? evaluateNot(sub, sup)
+			: null;
+
+	// If evaluateNot confirms incompatibility → fail immediately
+	if (notResult === false) {
+		const errors = computeSemanticErrors(sub, sup, "");
+		return { isSubset: false, merged: null, errors };
+	}
+
+	// Strip not + patterns confirmed by sampling before the merge,
 	// same strategy as in isAtomicSubsetOf to avoid structural false negatives
 	// caused by the conjunction of patterns as lookahead.
 	let effectiveSup = sup;
 	if (typeof sub !== "boolean" && typeof sup !== "boolean") {
-		effectiveSup = stripPatternFromSup(sub, sup);
+		// If the `not` is confirmed compatible → strip it before the merge
+		if (notResult === true) {
+			effectiveSup = stripNotFromSup(sub, sup, true);
+			if (
+				typeof effectiveSup !== "boolean" &&
+				Object.keys(effectiveSup).length === 0
+			) {
+				return { isSubset: true, merged: sub, errors: [] };
+			}
+		} else {
+			effectiveSup = stripNotFromSup(sub, sup, false);
+		}
+		effectiveSup = stripPatternFromSup(sub, effectiveSup);
 	}
 
 	try {
