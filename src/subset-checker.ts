@@ -729,6 +729,33 @@ function isPropertySubsetOf(
 }
 
 /**
+ * Checks whether the array-level constraints of `sub` are compatible
+ * with those of `sup` for subset semantics:
+ * - `minItems`: sub.minItems must be >= sup.minItems
+ * - `maxItems`: sub.maxItems must be <= sup.maxItems
+ * - `uniqueItems`: if sup requires it, sub must too
+ */
+function isArrayConstraintsSubset(sub: JSONSchema7, sup: JSONSchema7): boolean {
+	// minItems: sub.minItems must be >= sup.minItems
+	if (sup.minItems !== undefined) {
+		if (sub.minItems === undefined || sub.minItems < sup.minItems) {
+			return false;
+		}
+	}
+	// maxItems: sub.maxItems must be <= sup.maxItems
+	if (sup.maxItems !== undefined) {
+		if (sub.maxItems === undefined || sub.maxItems > sup.maxItems) {
+			return false;
+		}
+	}
+	// uniqueItems: if sup requires it, sub must also require it
+	if (sup.uniqueItems === true && sub.uniqueItems !== true) {
+		return false;
+	}
+	return true;
+}
+
+/**
  * Checks `sub ⊆ sup` by comparing object properties (and array items)
  * individually, using the full branching-aware logic.
  *
@@ -756,11 +783,16 @@ function isObjectSubsetByProperties(
 			isPlainObj(sub.items) &&
 			isPlainObj(sup.items)
 		) {
-			return isPropertySubsetOf(
-				sub.items as JSONSchema7Definition,
-				sup.items as JSONSchema7Definition,
-				engine,
-			);
+			if (
+				!isPropertySubsetOf(
+					sub.items as JSONSchema7Definition,
+					sup.items as JSONSchema7Definition,
+					engine,
+				)
+			) {
+				return false;
+			}
+			return isArrayConstraintsSubset(sub, sup);
 		}
 		return false;
 	}
@@ -836,6 +868,9 @@ function isObjectSubsetByProperties(
 				engine,
 			)
 		) {
+			return false;
+		}
+		if (!isArrayConstraintsSubset(sub, sup)) {
 			return false;
 		}
 	}
