@@ -690,19 +690,97 @@ function checkObjectConstraints(
 							received: `no dependency for ${key}`,
 						});
 					}
-				} else {
+				} else if (isPlainObj(supDep)) {
 					// ── Schema-form dependencies ──
 					// Check if the trigger property is never produced by sub
 					const triggerNeverProduced =
 						!hasOwn(subProps, key) && !subRequired.includes(key);
 
-					if (!triggerNeverProduced) {
-						errors.push({
-							type: SchemaErrorType.ObjectConstraint,
-							key: path || "$root",
-							expected: `dependency: ${key} requires schema`,
-							received: `no dependency for ${key}`,
-						});
+					if (triggerNeverProduced) {
+						// Vacuously true — trigger never fires
+					} else {
+						// The trigger exists in sub — check if sub structurally
+						// satisfies the dep schema (required + properties).
+						const depSchema = supDep as JSONSchema7;
+						const depRequired = Array.isArray(depSchema.required)
+							? (depSchema.required as string[])
+							: [];
+						const depProps = isPlainObj(depSchema.properties)
+							? (depSchema.properties as Record<string, JSONSchema7Definition>)
+							: {};
+
+						const allDepRequiredSatisfied = depRequired.every((r) =>
+							subRequired.includes(r),
+						);
+
+						let allDepPropsSatisfied = true;
+						if (allDepRequiredSatisfied) {
+							for (const propKey of Object.keys(depProps)) {
+								if (!hasOwn(subProps, propKey)) {
+									allDepPropsSatisfied = false;
+									break;
+								}
+								const subPropDef = subProps[propKey];
+								const depPropDef = depProps[propKey];
+								if (
+									subPropDef === undefined ||
+									depPropDef === undefined ||
+									typeof subPropDef === "boolean" ||
+									typeof depPropDef === "boolean"
+								) {
+									if (subPropDef !== depPropDef) {
+										allDepPropsSatisfied = false;
+										break;
+									}
+									continue;
+								}
+								// Check that every keyword in the dep property exists
+								// in sub property with an equal or stricter value
+								const depPropKeys = Object.keys(depPropDef);
+								const propSatisfied = depPropKeys.every((dk) => {
+									const depVal = (depPropDef as Record<string, unknown>)[dk];
+									const subVal = (subPropDef as Record<string, unknown>)[dk];
+									if (subVal === undefined) return false;
+									if (
+										typeof depVal === "number" &&
+										typeof subVal === "number"
+									) {
+										if (
+											dk === "minLength" ||
+											dk === "minimum" ||
+											dk === "exclusiveMinimum" ||
+											dk === "minItems" ||
+											dk === "minProperties"
+										) {
+											return subVal >= depVal;
+										}
+										if (
+											dk === "maxLength" ||
+											dk === "maximum" ||
+											dk === "exclusiveMaximum" ||
+											dk === "maxItems" ||
+											dk === "maxProperties"
+										) {
+											return subVal <= depVal;
+										}
+									}
+									return deepEqual(depVal, subVal);
+								});
+								if (!propSatisfied) {
+									allDepPropsSatisfied = false;
+									break;
+								}
+							}
+						}
+
+						if (!allDepRequiredSatisfied || !allDepPropsSatisfied) {
+							errors.push({
+								type: SchemaErrorType.ObjectConstraint,
+								key: path || "$root",
+								expected: `dependency: ${key} requires schema`,
+								received: `no dependency for ${key}`,
+							});
+						}
 					}
 				}
 			} else if (Array.isArray(supDep) && Array.isArray(subDep)) {

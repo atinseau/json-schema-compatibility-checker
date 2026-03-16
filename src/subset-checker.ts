@@ -436,9 +436,10 @@ function stripNotFromSup(
 		]) as JSONSchema7;
 	}
 
-	// ── Remove `not` in common properties ──
-	// If sup.properties[key] has a `not` and evaluateNot(sub.prop, sup.prop)
-	// confirms compatibility, we remove the `not` from that property as well.
+	// ── Recursively remove `not` in common properties ──
+	// For each shared property: if the sup property has a direct `not`,
+	// evaluate and strip it. Then recurse deeper into nested objects so
+	// that `not` constraints at any depth are handled.
 	if (
 		isPlainObj(result.properties) &&
 		isPlainObj((sub as JSONSchema7).properties)
@@ -454,22 +455,32 @@ function stripNotFromSup(
 			const supPropDef = supProps[key];
 			const subPropDef = subProps[key];
 			if (
-				supPropDef !== undefined &&
-				subPropDef !== undefined &&
-				typeof supPropDef !== "boolean" &&
-				typeof subPropDef !== "boolean" &&
-				hasOwn(supPropDef, "not")
+				supPropDef === undefined ||
+				subPropDef === undefined ||
+				typeof supPropDef === "boolean" ||
+				typeof subPropDef === "boolean"
 			) {
-				// Check not compatibility at the property level
+				continue;
+			}
+
+			let strippedProp: JSONSchema7Definition = supPropDef;
+
+			// Direct `not` on this property — evaluate and strip if confirmed
+			if (hasOwn(supPropDef, "not")) {
 				const propNotResult = evaluateNot(subPropDef, supPropDef);
 				if (propNotResult === true) {
-					// Lazy allocate newProps only on first modification
-					if (!newProps) newProps = { ...supProps };
-					newProps[key] = omitKeys(
+					strippedProp = omitKeys(
 						supPropDef as unknown as Record<string, unknown>,
 						["not"],
 					) as JSONSchema7Definition;
 				}
+			}
+
+			// Recurse into nested object properties (handles `not` at any depth)
+			const recursed = stripNotFromSup(subPropDef, strippedProp, false);
+			if (recursed !== supPropDef) {
+				if (!newProps) newProps = { ...supProps };
+				newProps[key] = recursed;
 			}
 		}
 
@@ -724,12 +735,87 @@ function stripDependenciesFromSup(
 			return sup;
 		}
 
-		// Schema-form: only strip if trigger is never produced
-		const triggerNeverProduced =
-			!hasOwn(subProps, key) &&
-			!subRequired.includes(key) &&
-			subHasAdditionalPropsFalse;
-		if (!triggerNeverProduced) return sup;
+		// Schema-form: strip if trigger is never produced OR if sub satisfies the dep schema
+		if (isPlainObj(dep)) {
+			const triggerNeverProduced =
+				!hasOwn(subProps, key) &&
+				!subRequired.includes(key) &&
+				subHasAdditionalPropsFalse;
+			if (triggerNeverProduced) continue;
+
+			// The trigger exists in sub — check if sub structurally satisfies the dep schema.
+			// A schema-form dependency { A: { required: ['B'], properties: { B: S } } }
+			// means "if A is present → the object must also match the dep schema".
+			// If sub already satisfies the dep schema (all dep.required are in sub.required,
+			// and all dep.properties exist in sub.properties), the dependency is trivially met.
+			const depSchema = dep as JSONSchema7;
+			const depRequired = Array.isArray(depSchema.required)
+				? (depSchema.required as string[])
+				: [];
+			const depProps = isPlainObj(depSchema.properties)
+				? (depSchema.properties as Record<string, JSONSchema7Definition>)
+				: {};
+
+			const allDepRequiredSatisfied = depRequired.every((r) =>
+				subRequired.includes(r),
+			);
+			if (!allDepRequiredSatisfied) return sup;
+
+			const allDepPropsSatisfied = Object.keys(depProps).every((propKey) => {
+				if (!hasOwn(subProps, propKey)) return false;
+				// Check that sub's property is at least as narrow as the dep's property.
+				// For simple cases (same type, sub has stricter constraints), deepEqual
+				// or a structural check suffices. We compare the dep property against
+				// the sub property: if sub.properties[k] has all constraints from
+				// dep.properties[k], the dep is satisfied for that property.
+				const subPropDef = subProps[propKey];
+				const depPropDef = depProps[propKey];
+				if (subPropDef === undefined || depPropDef === undefined) return false;
+				if (
+					typeof subPropDef === "boolean" ||
+					typeof depPropDef === "boolean"
+				) {
+					return subPropDef === depPropDef;
+				}
+				// If the sub property is structurally equal to or narrower than the dep property,
+				// the dependency is satisfied. A simple heuristic: check that every keyword
+				// in the dep property also exists in the sub property with an equal or stricter value.
+				const depPropKeys = Object.keys(depPropDef);
+				return depPropKeys.every((dk) => {
+					const depVal = (depPropDef as Record<string, unknown>)[dk];
+					const subVal = (subPropDef as Record<string, unknown>)[dk];
+					if (subVal === undefined) return false;
+					// For numeric constraints, sub must be at least as strict
+					if (typeof depVal === "number" && typeof subVal === "number") {
+						if (
+							dk === "minLength" ||
+							dk === "minimum" ||
+							dk === "exclusiveMinimum" ||
+							dk === "minItems" ||
+							dk === "minProperties"
+						) {
+							return subVal >= depVal;
+						}
+						if (
+							dk === "maxLength" ||
+							dk === "maximum" ||
+							dk === "exclusiveMaximum" ||
+							dk === "maxItems" ||
+							dk === "maxProperties"
+						) {
+							return subVal <= depVal;
+						}
+					}
+					return deepEqual(depVal, subVal);
+				});
+			});
+			if (!allDepPropsSatisfied) return sup;
+
+			continue;
+		}
+
+		// Unknown form — cannot strip safely
+		return sup;
 	}
 
 	// All dependencies satisfied → strip
@@ -1383,6 +1469,8 @@ export function checkBranchedSup(
 				effectiveBranch = stripNotFromSup(sub, branch, false);
 			}
 			effectiveBranch = stripPatternFromSup(sub, effectiveBranch);
+			effectiveBranch = stripRedundantBoundsFromSup(sub, effectiveBranch);
+			effectiveBranch = stripDependenciesFromSup(sub, effectiveBranch);
 		}
 		const merged = engine.merge(sub, effectiveBranch);
 		if (merged !== null) {
