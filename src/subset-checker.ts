@@ -274,6 +274,17 @@ function evaluateNot(
 			return true;
 		}
 
+		// ── Case not.const + sub.enum ──
+		// When sub has enum and not has const, check that the forbidden const
+		// is not in sub's enum values. If none match → compatible.
+		if (hasOwn(notSchema, "const") && Array.isArray(sub.enum)) {
+			const notConst = notSchema.const;
+			const allDisjoint = sub.enum.every((v) => !deepEqual(v, notConst));
+			if (allDisjoint) return true;
+			// At least one enum value equals the forbidden const → incompatible
+			return false;
+		}
+
 		// ── Case not.enum ──
 		// Also placed BEFORE not.type for the same reason.
 		if (
@@ -289,6 +300,19 @@ function evaluateNot(
 			if (allExcluded) return true;
 			// Some values of sub are in not.enum → not automatically false,
 			// the merge engine can still handle it
+		}
+
+		// ── Case not.enum + sub.const ──
+		// When sub has const and not has enum, check that sub's const is not
+		// in the forbidden enum values.
+		if (
+			hasOwn(notSchema, "enum") &&
+			Array.isArray(notSchema.enum) &&
+			hasOwn(sub, "const")
+		) {
+			const inNotEnum = notSchema.enum.some((v) => deepEqual(v, sub.const));
+			if (!inNotEnum) return true;
+			return false;
 		}
 
 		// ── Case not.type ──
@@ -585,6 +609,133 @@ function stripPatternFromSup(
 	}
 
 	return result;
+}
+
+/**
+ * Strips redundant numeric bounds from `sup` when `sub` already has a stricter
+ * exclusive bound that implies the inclusive bound.
+ *
+ * For example, if sub has `exclusiveMinimum: 5` and sup has `minimum: 5`,
+ * the sup's `minimum` is redundant because `x > 5` ⊂ `x ≥ 5`.
+ */
+function stripRedundantBoundsFromSup(
+	sub: JSONSchema7Definition,
+	sup: JSONSchema7Definition,
+): JSONSchema7Definition {
+	if (typeof sub === "boolean" || typeof sup === "boolean") return sup;
+
+	const keysToStrip: string[] = [];
+
+	// sub.exclusiveMinimum >= sup.minimum → sup.minimum is redundant
+	if (
+		sup.minimum !== undefined &&
+		sub.minimum === undefined &&
+		sub.exclusiveMinimum !== undefined &&
+		sub.exclusiveMinimum >= sup.minimum
+	) {
+		keysToStrip.push("minimum");
+	}
+
+	// sub.exclusiveMaximum <= sup.maximum → sup.maximum is redundant
+	if (
+		sup.maximum !== undefined &&
+		sub.maximum === undefined &&
+		sub.exclusiveMaximum !== undefined &&
+		sub.exclusiveMaximum <= sup.maximum
+	) {
+		keysToStrip.push("maximum");
+	}
+
+	// sub.minimum > sup.exclusiveMinimum → sup.exclusiveMinimum is redundant
+	if (
+		sup.exclusiveMinimum !== undefined &&
+		sub.exclusiveMinimum === undefined &&
+		sub.minimum !== undefined &&
+		sub.minimum > sup.exclusiveMinimum
+	) {
+		keysToStrip.push("exclusiveMinimum");
+	}
+
+	// sub.maximum < sup.exclusiveMaximum → sup.exclusiveMaximum is redundant
+	if (
+		sup.exclusiveMaximum !== undefined &&
+		sub.exclusiveMaximum === undefined &&
+		sub.maximum !== undefined &&
+		sub.maximum < sup.exclusiveMaximum
+	) {
+		keysToStrip.push("exclusiveMaximum");
+	}
+
+	if (keysToStrip.length > 0) {
+		return omitKeys(
+			sup as unknown as Record<string, unknown>,
+			keysToStrip,
+		) as JSONSchema7;
+	}
+
+	return sup;
+}
+
+/**
+ * Strips `dependencies` from `sup` when every dependency is semantically
+ * satisfied by `sub`'s structure:
+ * - Array-form deps: all dependent properties are in `sub.required`, OR the
+ *   trigger property is never produced by `sub` (not in properties + not required).
+ * - Schema-form deps: only stripped when the trigger is never produced by `sub`.
+ */
+function stripDependenciesFromSup(
+	sub: JSONSchema7Definition,
+	sup: JSONSchema7Definition,
+): JSONSchema7Definition {
+	if (typeof sub === "boolean" || typeof sup === "boolean") return sup;
+	if (!isPlainObj(sup.dependencies)) return sup;
+
+	const supDeps = sup.dependencies as Record<
+		string,
+		JSONSchema7Definition | string[]
+	>;
+	const subRequired = Array.isArray(sub.required) ? sub.required : [];
+	const subProps = isPlainObj(sub.properties)
+		? (sub.properties as Record<string, JSONSchema7Definition>)
+		: {};
+	const subHasAdditionalPropsFalse = sub.additionalProperties === false;
+
+	for (const key of Object.keys(supDeps)) {
+		const dep = supDeps[key];
+
+		if (Array.isArray(dep)) {
+			// Array-form: satisfied if all dependents are always required,
+			// OR the trigger is never produced by sub
+			const triggerAlwaysPresent =
+				subRequired.includes(key) || hasOwn(subProps, key);
+			const triggerNeverProduced =
+				!hasOwn(subProps, key) &&
+				!subRequired.includes(key) &&
+				subHasAdditionalPropsFalse;
+
+			if (triggerNeverProduced) continue;
+
+			if (triggerAlwaysPresent) {
+				const allDepsRequired = dep.every((d) => subRequired.includes(d));
+				if (allDepsRequired) continue;
+			}
+
+			// This dependency is not satisfied — cannot strip
+			return sup;
+		}
+
+		// Schema-form: only strip if trigger is never produced
+		const triggerNeverProduced =
+			!hasOwn(subProps, key) &&
+			!subRequired.includes(key) &&
+			subHasAdditionalPropsFalse;
+		if (!triggerNeverProduced) return sup;
+	}
+
+	// All dependencies satisfied → strip
+	return omitKeys(sup as unknown as Record<string, unknown>, [
+		"dependencies",
+	]) as JSONSchema7;
 }
 
 // ─── Vacuous false-property stripping ────────────────────────────────────────
@@ -921,11 +1072,67 @@ function tryNestedBranchingFallback(
  * `oneOf`/`anyOf` in properties or items, falls back to a property-by-property
  * comparison via `isObjectSubsetByProperties`.
  */
+
+// ─── allOf resolution ────────────────────────────────────────────────────────
+//
+// When `sup` contains `allOf`, the merge engine resolves it during
+// `merge(sub, sup)`, but the stripping pipeline (stripNotFromSup,
+// stripDependenciesFromSup, etc.) runs **before** the merge and operates
+// on the raw `sup` — it cannot see keywords nested inside `allOf` branches.
+//
+// `resolveSupAllOf` pre-resolves the `allOf` by merging all its branches
+// into a single schema so that the stripping pipeline can operate on
+// the flattened result. Any top-level keywords on `sup` alongside `allOf`
+// are preserved by including them in the merge.
+
+/**
+ * If `sup` has an `allOf` array, resolve it by merging all branches
+ * (plus any sibling keywords) into a single flattened schema.
+ * Returns the original `sup` unchanged if there is no `allOf` or
+ * if the merge fails.
+ */
+function resolveSupAllOf(
+	sup: JSONSchema7Definition,
+	engine: MergeEngine,
+): JSONSchema7Definition {
+	if (typeof sup === "boolean") return sup;
+	if (!Array.isArray(sup.allOf) || sup.allOf.length === 0) return sup;
+
+	// Collect sibling keywords (everything except `allOf`) into a base schema.
+	// This handles cases like { allOf: [...], type: "object" }.
+	const { allOf: _allOf, ...sibling } = sup;
+	const branches = sup.allOf as JSONSchema7Definition[];
+
+	// Start from the sibling keywords (or first branch if no siblings).
+	let resolved: JSONSchema7Definition | null =
+		Object.keys(sibling).length > 0 ? (sibling as JSONSchema7) : null;
+
+	for (const branch of branches) {
+		if (resolved === null) {
+			resolved = branch;
+		} else {
+			resolved = engine.merge(resolved, branch);
+			if (resolved === null) {
+				// Merge failed — fall back to original sup so the existing
+				// pipeline can still attempt the merge with allOf intact.
+				return sup;
+			}
+		}
+	}
+
+	return resolved ?? sup;
+}
+
 export function isAtomicSubsetOf(
 	sub: JSONSchema7Definition,
 	sup: JSONSchema7Definition,
 	engine: MergeEngine,
 ): boolean {
+	// ── Resolve allOf in sup ──
+	// Pre-flatten allOf so that the stripping pipeline (stripNotFromSup,
+	// stripDependenciesFromSup, etc.) can see keywords from all branches.
+	sup = resolveSupAllOf(sup, engine);
+
 	const { branches: supBranches } = getBranchesTyped(sup);
 
 	// Simple schema → direct merge
@@ -1000,6 +1207,8 @@ export function isAtomicSubsetOf(
 			// satisfied by sub to prevent the merge from producing a combined
 			// pattern (lookahead conjunction) structurally ≠ sub.
 			effectiveSup = stripPatternFromSup(sub, effectiveSup);
+			effectiveSup = stripRedundantBoundsFromSup(sub, effectiveSup);
+			effectiveSup = stripDependenciesFromSup(sub, effectiveSup);
 		}
 
 		const merged = engine.merge(sub, effectiveSup);
@@ -1073,6 +1282,8 @@ export function isAtomicSubsetOf(
 
 			// Strip patterns confirmed by sampling
 			effectiveBranch = stripPatternFromSup(sub, effectiveBranch);
+			effectiveBranch = stripRedundantBoundsFromSup(sub, effectiveBranch);
+			effectiveBranch = stripDependenciesFromSup(sub, effectiveBranch);
 		}
 
 		const merged = engine.merge(sub, effectiveBranch);
@@ -1215,6 +1426,11 @@ export function checkAtomic(
 	sup: JSONSchema7Definition,
 	engine: MergeEngine,
 ): SubsetResult {
+	// ── Resolve allOf in sup ──
+	// Same as in isAtomicSubsetOf: pre-flatten allOf so that the stripping
+	// pipeline can see keywords from all branches.
+	sup = resolveSupAllOf(sup, engine);
+
 	// ── evaluateNot pre-check (aligned with isAtomicSubsetOf) ──
 	const notResult =
 		typeof sub !== "boolean" && typeof sup !== "boolean"
@@ -1245,6 +1461,8 @@ export function checkAtomic(
 			effectiveSup = stripNotFromSup(sub, sup, false);
 		}
 		effectiveSup = stripPatternFromSup(sub, effectiveSup);
+		effectiveSup = stripRedundantBoundsFromSup(sub, effectiveSup);
+		effectiveSup = stripDependenciesFromSup(sub, effectiveSup);
 	}
 
 	try {
