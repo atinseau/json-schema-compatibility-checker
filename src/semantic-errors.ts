@@ -336,39 +336,115 @@ function checkNumericConstraints(
 	path: string,
 	errors: SchemaError[],
 ): void {
-	checkMinConstraint(
-		sub.minimum,
-		sup.minimum,
-		"minimum",
-		path,
-		errors,
-		SchemaErrorType.NumericConstraint,
-	);
-	checkMaxConstraint(
-		sub.maximum,
-		sup.maximum,
-		"maximum",
-		path,
-		errors,
-		SchemaErrorType.NumericConstraint,
-	);
-	checkMinConstraint(
-		sub.exclusiveMinimum as number | undefined,
-		sup.exclusiveMinimum as number | undefined,
-		"exclusiveMinimum",
-		path,
-		errors,
-		SchemaErrorType.NumericConstraint,
-	);
-	checkMaxConstraint(
-		sub.exclusiveMaximum as number | undefined,
-		sup.exclusiveMaximum as number | undefined,
-		"exclusiveMaximum",
-		path,
-		errors,
-		SchemaErrorType.NumericConstraint,
-	);
+	const subMin = sub.minimum;
+	const subExclMin = sub.exclusiveMinimum as number | undefined;
+	const subMax = sub.maximum;
+	const subExclMax = sub.exclusiveMaximum as number | undefined;
 
+	const supMin = sup.minimum;
+	const supExclMin = sup.exclusiveMinimum as number | undefined;
+	const supMax = sup.maximum;
+	const supExclMax = sup.exclusiveMaximum as number | undefined;
+
+	// ── LOWER BOUND cross-check ──
+
+	// Check sup.minimum
+	if (supMin !== undefined) {
+		// sub satisfies sup.minimum if:
+		//   sub.minimum >= sup.minimum  OR
+		//   sub.exclusiveMinimum >= sup.minimum  (>X implies >=X when X is the same)
+		const satisfiedByMin = subMin !== undefined && subMin >= supMin;
+		const satisfiedByExclMin = subExclMin !== undefined && subExclMin >= supMin;
+
+		if (!satisfiedByMin && !satisfiedByExclMin) {
+			errors.push({
+				type: SchemaErrorType.NumericConstraint,
+				key: path || "$root",
+				expected: fmtConstraint("minimum", supMin),
+				received:
+					subMin !== undefined
+						? fmtConstraint("minimum", subMin)
+						: subExclMin !== undefined
+							? fmtConstraint("exclusiveMinimum", subExclMin)
+							: fmtConstraint("minimum", undefined),
+			});
+		}
+	}
+
+	// Check sup.exclusiveMinimum
+	if (supExclMin !== undefined) {
+		// sub satisfies sup.exclusiveMinimum if:
+		//   sub.exclusiveMinimum >= sup.exclusiveMinimum  OR
+		//   sub.minimum > sup.exclusiveMinimum  (>=X with X>B implies >B)
+		const satisfiedByExclMin =
+			subExclMin !== undefined && subExclMin >= supExclMin;
+		const satisfiedByMin = subMin !== undefined && subMin > supExclMin;
+
+		if (!satisfiedByExclMin && !satisfiedByMin) {
+			errors.push({
+				type: SchemaErrorType.NumericConstraint,
+				key: path || "$root",
+				expected: fmtConstraint("exclusiveMinimum", supExclMin),
+				received:
+					subExclMin !== undefined
+						? fmtConstraint("exclusiveMinimum", subExclMin)
+						: subMin !== undefined
+							? fmtConstraint("minimum", subMin)
+							: fmtConstraint("exclusiveMinimum", undefined),
+			});
+		}
+	}
+
+	// ── UPPER BOUND cross-check ──
+
+	// Check sup.maximum
+	if (supMax !== undefined) {
+		// sub satisfies sup.maximum if:
+		//   sub.maximum <= sup.maximum  OR
+		//   sub.exclusiveMaximum <= sup.maximum
+		const satisfiedByMax = subMax !== undefined && subMax <= supMax;
+		const satisfiedByExclMax = subExclMax !== undefined && subExclMax <= supMax;
+
+		if (!satisfiedByMax && !satisfiedByExclMax) {
+			errors.push({
+				type: SchemaErrorType.NumericConstraint,
+				key: path || "$root",
+				expected: fmtConstraint("maximum", supMax),
+				received:
+					subMax !== undefined
+						? fmtConstraint("maximum", subMax)
+						: subExclMax !== undefined
+							? fmtConstraint("exclusiveMaximum", subExclMax)
+							: fmtConstraint("maximum", undefined),
+			});
+		}
+	}
+
+	// Check sup.exclusiveMaximum
+	if (supExclMax !== undefined) {
+		// sub satisfies sup.exclusiveMaximum if:
+		//   sub.exclusiveMaximum <= sup.exclusiveMaximum  OR
+		//   sub.maximum < sup.exclusiveMaximum
+		const satisfiedByExclMax =
+			subExclMax !== undefined && subExclMax <= supExclMax;
+		const satisfiedByMax = subMax !== undefined && subMax < supExclMax;
+
+		if (!satisfiedByExclMax && !satisfiedByMax) {
+			errors.push({
+				type: SchemaErrorType.NumericConstraint,
+				key: path || "$root",
+				expected: fmtConstraint("exclusiveMaximum", supExclMax),
+				received:
+					subExclMax !== undefined
+						? fmtConstraint("exclusiveMaximum", subExclMax)
+						: subMax !== undefined
+							? fmtConstraint("maximum", subMax)
+							: fmtConstraint("exclusiveMaximum", undefined),
+			});
+		}
+	}
+
+	// ── multipleOf (unchanged) ──
 	if (sup.multipleOf !== undefined) {
 		if (sub.multipleOf === undefined) {
 			errors.push({
@@ -578,26 +654,56 @@ function checkObjectConstraints(
 			? (sub.dependencies as Record<string, JSONSchema7Definition | string[]>)
 			: null;
 
+		const subRequired = Array.isArray(sub.required)
+			? (sub.required as string[])
+			: [];
+		const subProps = isPlainObj(sub.properties) ? sub.properties : {};
+
 		for (const key of Object.keys(supDeps)) {
 			const supDep = supDeps[key];
 			const subDep = subDeps?.[key];
 
 			if (subDep === undefined) {
-				// sup requires a dependency that sub doesn't have
 				if (Array.isArray(supDep)) {
-					errors.push({
-						type: SchemaErrorType.ObjectConstraint,
-						key: path || "$root",
-						expected: `dependency: ${key} requires ${supDep.join(", ")}`,
-						received: `no dependency for ${key}`,
-					});
+					// ── Semantic deduction for array-form dependencies ──
+					//
+					// A dependency `{ A: ['B', 'C'] }` means:
+					//   "if A is present → B and C must also be present"
+					//
+					// Case 1: All dependent properties (B, C) are in sub.required
+					//   → The dependency is trivially satisfied (B and C are ALWAYS present)
+					//
+					// Case 2: The trigger property (A) doesn't exist in sub.properties
+					//         AND is not in sub.required
+					//   → sub will never produce A, so the dependency is never triggered
+					const allDepsAlwaysRequired = supDep.every((d) =>
+						subRequired.includes(d),
+					);
+					const triggerNeverProduced =
+						!hasOwn(subProps, key) && !subRequired.includes(key);
+
+					if (!allDepsAlwaysRequired && !triggerNeverProduced) {
+						errors.push({
+							type: SchemaErrorType.ObjectConstraint,
+							key: path || "$root",
+							expected: `dependency: ${key} requires ${supDep.join(", ")}`,
+							received: `no dependency for ${key}`,
+						});
+					}
 				} else {
-					errors.push({
-						type: SchemaErrorType.ObjectConstraint,
-						key: path || "$root",
-						expected: `dependency: ${key} requires schema`,
-						received: `no dependency for ${key}`,
-					});
+					// ── Schema-form dependencies ──
+					// Check if the trigger property is never produced by sub
+					const triggerNeverProduced =
+						!hasOwn(subProps, key) && !subRequired.includes(key);
+
+					if (!triggerNeverProduced) {
+						errors.push({
+							type: SchemaErrorType.ObjectConstraint,
+							key: path || "$root",
+							expected: `dependency: ${key} requires schema`,
+							received: `no dependency for ${key}`,
+						});
+					}
 				}
 			} else if (Array.isArray(supDep) && Array.isArray(subDep)) {
 				// Both are array form — check if sub includes all required props from sup
@@ -823,6 +929,78 @@ function hasArrayKeywords(s: JSONSchema7): boolean {
  * @param path  The current normalized path
  * @returns     List of semantic errors
  */
+/**
+ * Lightweight semantic check for whether `sub` trivially satisfies `sup.not`.
+ *
+ * Returns:
+ * - `true`  — the `not` is definitely satisfied (no error should be reported)
+ * - `false` — the `not` is definitely violated (error should be reported)
+ * - `null`  — cannot determine (fall back to structural check)
+ *
+ * This inlines the most common cases from `evaluateNot` in `subset-checker.ts`
+ * to avoid circular imports.
+ */
+function isNotSatisfied(sub: JSONSchema7, sup: JSONSchema7): boolean | null {
+	if (
+		!hasOwn(sup, "not") ||
+		!isPlainObj(sup.not) ||
+		typeof sup.not === "boolean"
+	) {
+		return null;
+	}
+	const notSchema = sup.not as JSONSchema7;
+
+	// ── Type disjointness ──
+	// If sub has a type and not has a type, and they're completely disjoint → satisfied
+	if (sub.type !== undefined && notSchema.type !== undefined) {
+		const subTypes = Array.isArray(sub.type) ? sub.type : [sub.type];
+		const notTypes = Array.isArray(notSchema.type)
+			? notSchema.type
+			: [notSchema.type];
+		const hasOverlap = subTypes.some((t) => notTypes.includes(t));
+
+		// Only consider pure type-only not schemas (no extra constraints)
+		const notKeys = Object.keys(notSchema);
+		const isTypeOnly = notKeys.length === 1 && notKeys[0] === "type";
+
+		if (isTypeOnly) {
+			if (!hasOverlap) return true; // disjoint types → not is satisfied
+			// If sub's types are entirely within not's types → definitely violated
+			if (subTypes.every((t) => notTypes.includes(t))) return false;
+		}
+	}
+
+	// ── Const disjointness ──
+	if (hasOwn(notSchema, "const")) {
+		if (hasOwn(sub, "const")) {
+			return !deepEqual(sub.const, notSchema.const);
+		}
+		if (Array.isArray(sub.enum)) {
+			const allDisjoint = sub.enum.every((v) => !deepEqual(v, notSchema.const));
+			if (allDisjoint) return true;
+		}
+	}
+
+	// ── Enum disjointness ──
+	if (Array.isArray(notSchema.enum)) {
+		if (hasOwn(sub, "const")) {
+			const constInNotEnum = notSchema.enum.some((v) =>
+				deepEqual(v, sub.const),
+			);
+			if (!constInNotEnum) return true;
+			return false;
+		}
+		if (Array.isArray(sub.enum)) {
+			const hasOverlap = sub.enum.some((v) =>
+				notSchema.enum?.some((nv) => deepEqual(v, nv)),
+			);
+			if (!hasOverlap) return true;
+		}
+	}
+
+	return null;
+}
+
 export function computeSemanticErrors(
 	sub: JSONSchema7Definition,
 	sup: JSONSchema7Definition,
@@ -862,9 +1040,8 @@ export function computeSemanticErrors(
 	const errors: SchemaError[] = [];
 
 	// ── Handle `not` keyword ──
-	// Check sup.not: sub must not satisfy the not-schema for sub ⊆ sup.
-	// Check sub.not: if sub has a not that sup doesn't, sub is more constrained (OK).
-	//                if sup has a not that sub doesn't, sub may be too permissive.
+	// Use semantic evaluation to check if the `not` is satisfied before
+	// falling back to structural comparison.
 	if (
 		hasOwn(supSchema, "not") &&
 		isPlainObj(supSchema.not) &&
@@ -873,31 +1050,42 @@ export function computeSemanticErrors(
 		const notSchema = supSchema.not as JSONSchema7;
 		const notFormatted = formatSchemaType(notSchema);
 
-		if (!hasOwn(subSchema, "not")) {
-			// sup excludes something, sub doesn't → sub is more permissive
+		// Use semantic evaluation to check if the `not` is satisfied
+		const notResult = isNotSatisfied(subSchema, supSchema);
+
+		if (notResult === false) {
+			// Sub definitely violates the `not` → confirmed error
 			errors.push({
 				type: SchemaErrorType.NotSchema,
 				key: path || "$root",
 				expected: `not ${notFormatted}`,
 				received: formatSchemaType(subSchema),
 			});
-		} else if (
-			isPlainObj(subSchema.not) &&
-			typeof subSchema.not !== "boolean"
-		) {
-			// Both have not — compare the not schemas
-			// For sub ⊆ sup, sub.not must be at least as broad as sup.not
-			// (i.e. sub excludes at least as much). We report if they differ.
-			const subNotSchema = subSchema.not as JSONSchema7;
-			if (!deepEqual(subNotSchema, notSchema)) {
+		} else if (notResult === null) {
+			// Indeterminate → fall back to structural check
+			if (!hasOwn(subSchema, "not")) {
 				errors.push({
 					type: SchemaErrorType.NotSchema,
 					key: path || "$root",
 					expected: `not ${notFormatted}`,
-					received: `not ${formatSchemaType(subNotSchema)}`,
+					received: formatSchemaType(subSchema),
 				});
+			} else if (
+				isPlainObj(subSchema.not) &&
+				typeof subSchema.not !== "boolean"
+			) {
+				const subNotSchema = subSchema.not as JSONSchema7;
+				if (!deepEqual(subNotSchema, notSchema)) {
+					errors.push({
+						type: SchemaErrorType.NotSchema,
+						key: path || "$root",
+						expected: `not ${notFormatted}`,
+						received: `not ${formatSchemaType(subNotSchema)}`,
+					});
+				}
 			}
 		}
+		// If notResult === true → not is satisfied, no error
 	}
 
 	// ── Get effective types ──
