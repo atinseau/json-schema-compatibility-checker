@@ -597,7 +597,7 @@ describe("partial validation — edge cases", () => {
 		};
 
 		// Provide only tags with partial item data
-		// minItems is NOT stripped (only required and additionalProperties are)
+		// minItems IS stripped in partial mode — truncated arrays are tolerated
 		// but the nested object required IS stripped in partial mode
 		const result = await checker.check(schema, schema, {
 			data: { tags: [{ id: "not_a_number" }] },
@@ -774,5 +774,298 @@ describe("partial validation — conditional schemas", () => {
 			(e) => e.received === "undefined",
 		);
 		expect(requiredErrors).toHaveLength(0);
+	});
+});
+
+// ── Cardinality constraints in partial mode ──────────────────────────────────
+
+describe("partial validation — minItems / minProperties stripping", () => {
+	let checker: JsonSchemaCompatibilityChecker;
+
+	beforeAll(() => {
+		checker = new JsonSchemaCompatibilityChecker();
+	});
+
+	// ── Case 1: empty array with minItems ────────────────────────────────────
+
+	test("empty array [] with minItems: 1 → passes in partial mode", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				ids: {
+					type: "array",
+					items: { type: "string" },
+					minItems: 1,
+				},
+			},
+			required: ["ids"],
+		};
+
+		const result = await checker.check(schema, schema, {
+			data: { ids: [] },
+			validate: { sup: { partial: true } },
+		});
+
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	test("empty array [] with minItems: 1 → fails in non-partial mode", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				ids: {
+					type: "array",
+					items: { type: "string" },
+					minItems: 1,
+				},
+			},
+			required: ["ids"],
+		};
+
+		const result = await checker.check(schema, schema, {
+			data: { ids: [] },
+			validate: true,
+		});
+
+		expect(result.isSubset).toBe(false);
+	});
+
+	// ── Case 2: truncated array with minItems ────────────────────────────────
+
+	test("truncated array ['static'] with minItems: 2 → passes in partial mode", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				ids: {
+					type: "array",
+					items: { type: "string" },
+					minItems: 2,
+				},
+			},
+			required: ["ids"],
+		};
+
+		// Data has only 1 element (e.g. after template filtering removed one)
+		const result = await checker.check(schema, schema, {
+			data: { ids: ["static"] },
+			validate: { sup: { partial: true } },
+		});
+
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	test("truncated array ['static'] with minItems: 2 → fails in non-partial mode", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				ids: {
+					type: "array",
+					items: { type: "string" },
+					minItems: 2,
+				},
+			},
+			required: ["ids"],
+		};
+
+		const result = await checker.check(schema, schema, {
+			data: { ids: ["static"] },
+			validate: true,
+		});
+
+		expect(result.isSubset).toBe(false);
+	});
+
+	// ── Case 3: minProperties on partial object ──────────────────────────────
+
+	test("object { a: 'x' } with minProperties: 2 → passes in partial mode", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			minProperties: 2,
+			properties: {
+				a: { type: "string" },
+				b: { type: "string" },
+			},
+		};
+
+		const result = await checker.check(schema, schema, {
+			data: { a: "x" },
+			validate: { sup: { partial: true } },
+		});
+
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	test("object { a: 'x' } with minProperties: 2 → fails in non-partial mode", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			minProperties: 2,
+			properties: {
+				a: { type: "string" },
+				b: { type: "string" },
+			},
+		};
+
+		const result = await checker.check(schema, schema, {
+			data: { a: "x" },
+			validate: true,
+		});
+
+		expect(result.isSubset).toBe(false);
+	});
+
+	// ── Case 4: non-truncated values still pass ──────────────────────────────
+
+	test("full array ['a', 'b'] with minItems: 2 → passes in both partial and non-partial", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				ids: {
+					type: "array",
+					items: { type: "string" },
+					minItems: 2,
+				},
+			},
+			required: ["ids"],
+		};
+
+		const partialResult = await checker.check(schema, schema, {
+			data: { ids: ["a", "b"] },
+			validate: { sup: { partial: true } },
+		});
+
+		const fullResult = await checker.check(schema, schema, {
+			data: { ids: ["a", "b"] },
+			validate: true,
+		});
+
+		expect(partialResult.isSubset).toBe(true);
+		expect(fullResult.isSubset).toBe(true);
+	});
+
+	// ── Case 5: maxItems is not problematic in partial ───────────────────────
+
+	test("maxItems still enforced in partial mode (truncated data never exceeds max)", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				ids: {
+					type: "array",
+					items: { type: "string" },
+					maxItems: 2,
+				},
+			},
+			required: ["ids"],
+		};
+
+		const result = await checker.check(schema, schema, {
+			data: { ids: ["a"] },
+			validate: { sup: { partial: true } },
+		});
+
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	// ── Case 6: deeply nested minItems ───────────────────────────────────────
+
+	test("nested schema { config: { tags: [] } } with config.tags.minItems: 1 → passes in partial", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				config: {
+					type: "object",
+					properties: {
+						tags: {
+							type: "array",
+							items: { type: "string" },
+							minItems: 1,
+						},
+					},
+					required: ["tags"],
+				},
+			},
+			required: ["config"],
+		};
+
+		const result = await checker.check(schema, schema, {
+			data: { config: { tags: [] } },
+			validate: { sup: { partial: true } },
+		});
+
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	// ── Case 7: minItems inside anyOf branches ───────────────────────────────
+
+	test("minItems inside anyOf branches → stripped in partial mode", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				items: {
+					anyOf: [
+						{
+							type: "array",
+							items: { type: "string" },
+							minItems: 2,
+						},
+						{
+							type: "array",
+							items: { type: "number" },
+							minItems: 3,
+						},
+					],
+				},
+			},
+		};
+
+		const result = await checker.check(schema, schema, {
+			data: { items: ["one"] },
+			validate: { sup: { partial: true } },
+		});
+
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toHaveLength(0);
+	});
+
+	// ── Case 8: minItems inside if/then/else ─────────────────────────────────
+
+	test("minItems inside then/else → stripped in partial mode", async () => {
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				kind: { type: "string", enum: ["few", "many"] },
+				values: {
+					type: "array",
+					items: { type: "string" },
+				},
+			},
+			required: ["kind", "values"],
+			if: {
+				properties: { kind: { const: "many" } },
+				required: ["kind"],
+			},
+			then: {
+				properties: {
+					values: { minItems: 5 },
+				},
+			},
+			else: {
+				properties: {
+					values: { minItems: 1 },
+				},
+			},
+		};
+
+		const result = await checker.check(schema, schema, {
+			data: { kind: "many", values: [] },
+			validate: { sup: { partial: true } },
+		});
+
+		expect(result.isSubset).toBe(true);
+		expect(result.errors).toHaveLength(0);
 	});
 });

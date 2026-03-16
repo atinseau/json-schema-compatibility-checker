@@ -439,7 +439,8 @@ export function getRuntimeValidationErrors(
 //
 // Strips `required` and `additionalProperties` from a schema recursively so
 // that AJV only validates the properties **present** in the data — without
-// reporting missing required properties or unexpected additional properties.
+// reporting missing required properties, unexpected additional properties,
+// or minimum cardinality violations on truncated arrays/objects.
 //
 // This is used by the "partial" runtime validation mode: the caller has
 // partial data (e.g. only some properties known at design-time) and wants to
@@ -447,15 +448,21 @@ export function getRuntimeValidationErrors(
 // properties that will be provided later by another source.
 
 /**
- * Recursively strips `required` and `additionalProperties` from an
- * object-typed JSON Schema so that AJV validates only the properties
- * present in the data.
+ * Recursively strips partial-mode constraints from a JSON Schema so that
+ * AJV validates only the values present in the data without penalizing
+ * absent or truncated entries.
+ *
+ * Stripped keywords:
+ * - `required` — missing properties are not errors in partial data
+ * - `additionalProperties` — extra properties are tolerated
+ * - `minItems` — truncated arrays (e.g. after template filtering) are tolerated
+ * - `minProperties` — objects with fewer keys than expected are tolerated
  *
  * Recurses into: `properties`, `items` (single + tuple), `oneOf`, `anyOf`,
  * `allOf`, `then`, `else`.
  *
  * @param schema - The schema to strip (not mutated — returns a new object)
- * @returns A new schema without `required` or `additionalProperties` at any level
+ * @returns A new schema without partial-mode constraints at any level
  */
 export function stripRequiredRecursive(schema: JSONSchema7): JSONSchema7 {
 	if (!isPlainObj(schema)) return schema;
@@ -463,6 +470,8 @@ export function stripRequiredRecursive(schema: JSONSchema7): JSONSchema7 {
 	const result: JSONSchema7 = { ...schema };
 	delete result.required;
 	delete result.additionalProperties;
+	delete result.minItems;
+	delete result.minProperties;
 
 	// ── Recurse into properties ──
 	if (isPlainObj(result.properties)) {
@@ -516,13 +525,13 @@ export function stripRequiredRecursive(schema: JSONSchema7): JSONSchema7 {
 }
 
 /**
- * Returns AJV validation errors for partial data — strips `required` and
- * `additionalProperties` before compilation so that only the properties
- * **present** in `data` are validated.
+ * Returns AJV validation errors for partial data — strips `required`,
+ * `additionalProperties`, `minItems`, and `minProperties` before compilation
+ * so that only the values **present** in `data` are validated.
  *
  * @param schema - The schema to validate against (not mutated)
  * @param data - The partial runtime data
- * @returns Normalized runtime validation errors for present properties only
+ * @returns Normalized runtime validation errors for present values only
  */
 export function getPartialRuntimeValidationErrors(
 	schema: JSONSchema7Definition,
