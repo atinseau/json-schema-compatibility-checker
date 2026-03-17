@@ -11,6 +11,7 @@ export type {
 	CheckerOptions,
 	CheckRuntimeOptions,
 	Constraint,
+	ConstraintExecutionContext,
 	Constraints,
 	ConstraintValidationResult,
 	ConstraintValidator,
