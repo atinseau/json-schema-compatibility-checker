@@ -26,6 +26,7 @@ import {
 import type {
 	CheckerOptions,
 	CheckRuntimeOptions,
+	ConstraintExecutionContext,
 	ConstraintValidatorRegistry,
 	ResolvedConditionResult,
 	ResolvedSubsetResult,
@@ -285,6 +286,8 @@ export class JsonSchemaCompatibilityChecker {
 		options: CheckRuntimeOptions,
 	): Promise<ResolvedSubsetResult> {
 		const data = options.data;
+		const constraintContext: ConstraintExecutionContext | undefined =
+			options.constraintContext;
 		const {
 			sub: validateSub,
 			sup: validateSup,
@@ -393,6 +396,7 @@ export class JsonSchemaCompatibilityChecker {
 							narrowedSubResolved,
 							data,
 							this.constraintValidators,
+							constraintContext,
 						),
 						"$sub",
 					),
@@ -406,6 +410,7 @@ export class JsonSchemaCompatibilityChecker {
 							narrowedSupResolved,
 							data,
 							this.constraintValidators,
+							constraintContext,
 						),
 						"$sup",
 					),

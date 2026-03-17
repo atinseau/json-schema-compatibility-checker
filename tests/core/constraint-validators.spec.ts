@@ -1,7 +1,10 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { JSONSchema7 } from "json-schema";
 import { JsonSchemaCompatibilityChecker } from "../../src";
-import type { ConstraintValidator } from "../../src/types.ts";
+import type {
+	ConstraintExecutionContext,
+	ConstraintValidator,
+} from "../../src/types.ts";
 
 // ── Constructor tests (from step 5) ──────────────────────────────────────────
 
@@ -932,5 +935,175 @@ describe("constraint validator — async validators", () => {
 
 		// Static check ignores constraints entirely — no async involved
 		expect(asyncChecker.isSubset(sub, sup)).toBe(true);
+	});
+});
+
+// ── constraintContext tests ───────────────────────────────────────────────────
+
+describe("constraint validator — constraintContext", () => {
+	test("context is forwarded to the validator", async () => {
+		const receivedContexts: Array<ConstraintExecutionContext | undefined> = [];
+
+		const checker = new JsonSchemaCompatibilityChecker({
+			constraints: {
+				CapturesContext: (_value, _params, context) => {
+					receivedContexts.push(context);
+					return { valid: true };
+				},
+			},
+		});
+
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				id: { type: "string", constraints: ["CapturesContext"] },
+			},
+		};
+
+		await checker.check(schema, schema, {
+			data: { id: "hello" },
+			validate: true,
+			constraintContext: { companyId: 42, userId: "u-1" },
+		});
+
+		expect(receivedContexts.length).toBeGreaterThan(0);
+		for (const ctx of receivedContexts) {
+			expect(ctx).toEqual({ companyId: 42, userId: "u-1" });
+		}
+	});
+
+	test("context is undefined when constraintContext is omitted", async () => {
+		const receivedContexts: Array<ConstraintExecutionContext | undefined> = [];
+
+		const checker = new JsonSchemaCompatibilityChecker({
+			constraints: {
+				CapturesContext: (_value, _params, context) => {
+					receivedContexts.push(context);
+					return { valid: true };
+				},
+			},
+		});
+
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				id: { type: "string", constraints: ["CapturesContext"] },
+			},
+		};
+
+		await checker.check(schema, schema, {
+			data: { id: "hello" },
+			validate: true,
+		});
+
+		expect(receivedContexts.length).toBeGreaterThan(0);
+		for (const ctx of receivedContexts) {
+			expect(ctx).toBeUndefined();
+		}
+	});
+
+	test("context-dependent validator can fail based on context value", async () => {
+		const checker = new JsonSchemaCompatibilityChecker({
+			constraints: {
+				RequiresTenantA: (_value, _params, context) => ({
+					valid: context?.tenantId === "tenant-a",
+					message: "Only allowed for tenant-a",
+				}),
+			},
+		});
+
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				name: { type: "string", constraints: ["RequiresTenantA"] },
+			},
+		};
+
+		const passing = await checker.check(schema, schema, {
+			data: { name: "hello" },
+			validate: true,
+			constraintContext: { tenantId: "tenant-a" },
+		});
+		expect(passing.isSubset).toBe(true);
+
+		const failing = await checker.check(schema, schema, {
+			data: { name: "hello" },
+			validate: true,
+			constraintContext: { tenantId: "tenant-b" },
+		});
+		expect(failing.isSubset).toBe(false);
+		expect(failing.errors).toContainEqual(
+			expect.objectContaining({
+				expected: "RequiresTenantA",
+				received: "Only allowed for tenant-a",
+			}),
+		);
+	});
+
+	test("context is forwarded to async validators", async () => {
+		const receivedContexts: Array<ConstraintExecutionContext | undefined> = [];
+
+		const checker = new JsonSchemaCompatibilityChecker({
+			constraints: {
+				AsyncCapturesContext: async (_value, _params, context) => {
+					receivedContexts.push(context);
+					return { valid: true };
+				},
+			},
+		});
+
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				id: { type: "string", constraints: ["AsyncCapturesContext"] },
+			},
+		};
+
+		await checker.check(schema, schema, {
+			data: { id: "hello" },
+			validate: true,
+			constraintContext: { requestId: "req-123" },
+		});
+
+		expect(receivedContexts.length).toBeGreaterThan(0);
+		for (const ctx of receivedContexts) {
+			expect(ctx).toEqual({ requestId: "req-123" });
+		}
+	});
+
+	test("context is forwarded through nested property recursion", async () => {
+		const receivedContexts: Array<ConstraintExecutionContext | undefined> = [];
+
+		const checker = new JsonSchemaCompatibilityChecker({
+			constraints: {
+				DeepCapture: (_value, _params, context) => {
+					receivedContexts.push(context);
+					return { valid: true };
+				},
+			},
+		});
+
+		const schema: JSONSchema7 = {
+			type: "object",
+			properties: {
+				user: {
+					type: "object",
+					properties: {
+						id: { type: "string", constraints: ["DeepCapture"] },
+					},
+				},
+			},
+		};
+
+		await checker.check(schema, schema, {
+			data: { user: { id: "hello" } },
+			validate: true,
+			constraintContext: { scope: "nested" },
+		});
+
+		expect(receivedContexts.length).toBeGreaterThan(0);
+		for (const ctx of receivedContexts) {
+			expect(ctx).toEqual({ scope: "nested" });
+		}
 	});
 });

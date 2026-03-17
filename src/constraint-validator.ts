@@ -1,6 +1,7 @@
 import type { JSONSchema7Definition } from "json-schema";
 import type {
 	Constraint,
+	ConstraintExecutionContext,
 	ConstraintValidatorRegistry,
 	SchemaError,
 } from "./types.ts";
@@ -29,6 +30,7 @@ async function validateValue(
 	value: unknown,
 	registry: ConstraintValidatorRegistry,
 	path: string,
+	context: ConstraintExecutionContext | undefined,
 ): Promise<SchemaError[]> {
 	const errors: SchemaError[] = [];
 
@@ -50,7 +52,7 @@ async function validateValue(
 		}
 
 		try {
-			const result = await validator(value, params);
+			const result = await validator(value, params, context);
 			if (!result.valid) {
 				errors.push({
 					type: SchemaErrorType.CustomConstraint,
@@ -95,6 +97,7 @@ export async function validateSchemaConstraints(
 	schema: JSONSchema7Definition,
 	data: unknown,
 	registry: ConstraintValidatorRegistry,
+	context?: ConstraintExecutionContext,
 	path = "",
 ): Promise<SchemaError[]> {
 	// Boolean schemas → nothing to validate
@@ -105,7 +108,9 @@ export async function validateSchemaConstraints(
 	// ── Root-level constraints ──
 	const constraints = toConstraintArray(schema.constraints);
 	if (constraints.length > 0) {
-		errors.push(...(await validateValue(constraints, data, registry, path)));
+		errors.push(
+			...(await validateValue(constraints, data, registry, path, context)),
+		);
 	}
 
 	// ── Recurse into properties ──
@@ -127,6 +132,7 @@ export async function validateSchemaConstraints(
 					propSchema,
 					propValue,
 					registry,
+					context,
 					propPath,
 				)),
 			);
@@ -144,6 +150,7 @@ export async function validateSchemaConstraints(
 					itemSchema,
 					data[i],
 					registry,
+					context,
 					itemPath,
 				)),
 			);
@@ -162,6 +169,7 @@ export async function validateSchemaConstraints(
 					itemSchema,
 					data[i],
 					registry,
+					context,
 					itemPath,
 				)),
 			);
@@ -199,6 +207,7 @@ export async function validateSchemaConstraints(
 						patternSchema,
 						dataValue,
 						registry,
+						context,
 						ppPath,
 					)),
 				);
@@ -246,6 +255,7 @@ export async function validateSchemaConstraints(
 					apSchema,
 					dataValue,
 					registry,
+					context,
 					apPath,
 				)),
 			);
@@ -276,7 +286,13 @@ export async function validateSchemaConstraints(
 			// Schema-form dependency: validate the entire data object against it
 			// The dependency schema applies to the whole object, not just the dep key
 			errors.push(
-				...(await validateSchemaConstraints(depValue, data, registry, path)),
+				...(await validateSchemaConstraints(
+					depValue,
+					data,
+					registry,
+					context,
+					path,
+				)),
 			);
 		}
 	}

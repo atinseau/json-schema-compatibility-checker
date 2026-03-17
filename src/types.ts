@@ -174,6 +174,24 @@ export interface CheckRuntimeOptions {
 	 * @default false
 	 */
 	validate?: boolean | ValidateTargets;
+
+	/**
+	 * Arbitrary context forwarded to every constraint validator during
+	 * this `check()` call.
+	 *
+	 * Useful for passing per-request state (e.g. tenant ID, user scope)
+	 * that is not encoded in the schema but is needed by validators at runtime.
+	 *
+	 * @example
+	 * ```ts
+	 * checker.check(sub, sup, {
+	 *   data: { accountId: '123' },
+	 *   validate: { sup: { partial: true } },
+	 *   constraintContext: { companyId: 42 },
+	 * });
+	 * ```
+	 */
+	constraintContext?: ConstraintExecutionContext;
 }
 
 /**
@@ -206,6 +224,16 @@ export type Constraints = Constraint | Constraint[];
 // ─── Constraint Validator types ──────────────────────────────────────────────
 
 /**
+ * Arbitrary per-call context forwarded to every constraint validator
+ * during a `check()` invocation.
+ *
+ * Allows callers to pass request-scoped information (e.g. tenant ID,
+ * user ID, feature flags) that is not part of the schema definition
+ * but is required by constraint validators at runtime.
+ */
+export type ConstraintExecutionContext = Record<string, unknown>;
+
+/**
  * Result of a constraint validation.
  */
 export interface ConstraintValidationResult {
@@ -218,14 +246,15 @@ export interface ConstraintValidationResult {
 /**
  * A constraint validator function.
  *
- * Receives the value to validate and optional params defined
- * in the schema's constraint definition.
+ * Receives the value to validate, optional params defined in the schema's
+ * constraint definition, and an optional per-call execution context.
  *
  * Can be synchronous or asynchronous. When async validators are used,
  * `check()` with runtime options returns a `Promise`.
  *
  * @param value - The runtime value to validate
  * @param params - The `params` object from the constraint definition, if any
+ * @param context - The per-call execution context passed via `constraintContext`, if any
  * @returns The validation result, or a Promise resolving to it
  *
  * @example
@@ -246,11 +275,18 @@ export interface ConstraintValidationResult {
  *   valid: typeof value === "number" && value >= (params?.min ?? 0),
  *   message: `Value must be at least ${params?.min}`,
  * });
+ *
+ * // Validator using execution context (e.g. tenant-scoped DB lookup)
+ * const isUniqueInTenant: ConstraintValidator = async (value, params, context) => ({
+ *   valid: await checkUniqueness(value as string, context?.companyId as number),
+ *   message: "Value must be unique within the tenant",
+ * });
  * ```
  */
 export type ConstraintValidator = (
 	value: unknown,
 	params?: Record<string, unknown>,
+	context?: ConstraintExecutionContext,
 ) => ConstraintValidationResult | Promise<ConstraintValidationResult>;
 
 /**
