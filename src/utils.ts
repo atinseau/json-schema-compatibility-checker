@@ -166,6 +166,168 @@ export function schemaDeepEqual(
 	return deepEqual(a, b);
 }
 
+/**
+ * All JSON Schema Draft 7 keywords that have semantic (validation) impact.
+ * Any key NOT in this set is considered non-semantic (metadata, extensions)
+ * and should be ignored during subset comparison.
+ */
+const SEMANTIC_KEYWORDS = new Set([
+	// validation
+	"type",
+	"enum",
+	"const",
+	// numeric
+	"multipleOf",
+	"maximum",
+	"exclusiveMaximum",
+	"minimum",
+	"exclusiveMinimum",
+	// string
+	"maxLength",
+	"minLength",
+	"pattern",
+	"format",
+	// array
+	"items",
+	"additionalItems",
+	"maxItems",
+	"minItems",
+	"uniqueItems",
+	"contains",
+	// object
+	"maxProperties",
+	"minProperties",
+	"required",
+	"properties",
+	"patternProperties",
+	"additionalProperties",
+	"dependencies",
+	"propertyNames",
+	// conditionals
+	"if",
+	"then",
+	"else",
+	// composition
+	"allOf",
+	"anyOf",
+	"oneOf",
+	"not",
+	// references
+	"$ref",
+	// custom constraints (used by this library)
+	"constraints",
+]);
+
+/** Keywords whose value is a Record<string, JSONSchema7Definition> (property maps). */
+const SCHEMA_MAP_KEYWORDS = new Set([
+	"properties",
+	"patternProperties",
+	"dependencies",
+]);
+
+/** Keywords whose value is a single sub-schema. */
+const SINGLE_SCHEMA_KEYWORDS = new Set([
+	"items",
+	"additionalItems",
+	"additionalProperties",
+	"contains",
+	"propertyNames",
+	"not",
+	"if",
+	"then",
+	"else",
+]);
+
+/** Keywords whose value is an array of sub-schemas. */
+const ARRAY_SCHEMA_KEYWORDS = new Set(["allOf", "anyOf", "oneOf"]);
+
+/**
+ * Schema-aware deep equality that ignores non-semantic keywords
+ * (metadata like `title`, `description`, `default`, `examples`,
+ * and extension keywords like `x-tags`, `tags`, etc.).
+ *
+ * Unlike a naive recursive strip, this function understands JSON Schema
+ * structure: it only filters keys at schema level, and correctly recurses
+ * into property maps (where keys are user-defined property names, not
+ * schema keywords) and sub-schema keywords.
+ */
+export function semanticDeepEqual(a: unknown, b: unknown): boolean {
+	// Fast path: structurally identical
+	if (a === b) return true;
+	if (a === null || b === null) return false;
+	if (typeof a !== typeof b) return false;
+
+	if (typeof a === "object") {
+		if (Array.isArray(a)) {
+			if (!Array.isArray(b)) return false;
+			if (a.length !== b.length) return false;
+			for (let i = 0; i < a.length; i++) {
+				if (!semanticDeepEqual(a[i], b[i])) return false;
+			}
+			return true;
+		}
+		if (Array.isArray(b)) return false;
+
+		const aObj = a as Record<string, unknown>;
+		const bObj = b as Record<string, unknown>;
+
+		// Collect only semantic keys from each side
+		const aKeys = Object.keys(aObj).filter((k) => SEMANTIC_KEYWORDS.has(k));
+		const bKeys = Object.keys(bObj).filter((k) => SEMANTIC_KEYWORDS.has(k));
+		if (aKeys.length !== bKeys.length) return false;
+
+		for (const key of aKeys) {
+			if (!(key in bObj)) return false;
+
+			const aVal = aObj[key];
+			const bVal = bObj[key];
+
+			if (SCHEMA_MAP_KEYWORDS.has(key)) {
+				// Property maps: keys are user-defined names, values are sub-schemas
+				if (!schemaMapEqual(aVal, bVal)) return false;
+			} else if (SINGLE_SCHEMA_KEYWORDS.has(key)) {
+				// Single sub-schema: recurse with semantic comparison
+				if (!semanticDeepEqual(aVal, bVal)) return false;
+			} else if (ARRAY_SCHEMA_KEYWORDS.has(key)) {
+				// Array of sub-schemas
+				if (!Array.isArray(aVal) || !Array.isArray(bVal)) {
+					if (!deepEqual(aVal, bVal)) return false;
+				} else {
+					if (aVal.length !== bVal.length) return false;
+					for (let i = 0; i < aVal.length; i++) {
+						if (!semanticDeepEqual(aVal[i], bVal[i])) return false;
+					}
+				}
+			} else {
+				// Leaf keywords (type, enum, const, minimum, etc.): plain deepEqual
+				if (!deepEqual(aVal, bVal)) return false;
+			}
+		}
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * Compares two schema maps (like `properties`) where keys are user-defined
+ * names and values are sub-schemas. Keys are compared literally (they are
+ * NOT schema keywords), values are compared with `semanticDeepEqual`.
+ */
+function schemaMapEqual(a: unknown, b: unknown): boolean {
+	if (!isPlainObj(a) || !isPlainObj(b)) return deepEqual(a, b);
+	const aObj = a as Record<string, unknown>;
+	const bObj = b as Record<string, unknown>;
+	const aKeys = Object.keys(aObj);
+	const bKeys = Object.keys(bObj);
+	if (aKeys.length !== bKeys.length) return false;
+	for (const key of aKeys) {
+		if (!(key in bObj)) return false;
+		if (!semanticDeepEqual(aObj[key], bObj[key])) return false;
+	}
+	return true;
+}
+
 // ─── Constraints Helpers ─────────────────────────────────────────────────────
 
 /**

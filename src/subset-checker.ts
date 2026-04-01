@@ -5,7 +5,13 @@ import { normalize } from "./normalizer.ts";
 import { isPatternSubset } from "./pattern-subset.ts";
 import { computeSemanticErrors } from "./semantic-errors.ts";
 import type { SchemaError, SubsetResult } from "./types.ts";
-import { deepEqual, hasOwn, isPlainObj, omitKeys } from "./utils.ts";
+import {
+	deepEqual,
+	hasOwn,
+	isPlainObj,
+	omitKeys,
+	semanticDeepEqual,
+} from "./utils.ts";
 
 // ─── Subset Checker ──────────────────────────────────────────────────────────
 //
@@ -1340,12 +1346,12 @@ export function isAtomicSubsetOf(
 		// Fast path: if merged is already structurally equal to sub,
 		// skip normalize entirely. This is the common case when sub ⊆ sup
 		// (A ∩ B = A), saving O(n) normalize traversal on wide schemas.
-		if (deepEqual(merged, sub)) return true;
+		if (semanticDeepEqual(merged, sub)) return true;
 
 		// Strip vacuously-satisfied `false` properties added by the merge
 		// from sup but absent in sub (vacuous truth: absent ⊆ forbidden).
 		const strippedMerged = stripVacuousFalseProperties(merged, sub);
-		if (strippedMerged !== merged && deepEqual(strippedMerged, sub)) {
+		if (strippedMerged !== merged && semanticDeepEqual(strippedMerged, sub)) {
 			return true;
 		}
 
@@ -1353,7 +1359,7 @@ export function isAtomicSubsetOf(
 		// enum when const is present), then compare.
 		const normalizedMerged = normalize(strippedMerged);
 		if (
-			deepEqual(normalizedMerged, sub) ||
+			semanticDeepEqual(normalizedMerged, sub) ||
 			engine.isEqual(normalizedMerged, sub)
 		) {
 			return true;
@@ -1413,17 +1419,17 @@ export function isAtomicSubsetOf(
 			return tryNestedBranchingFallback(sub, effectiveBranch, engine) === true;
 		}
 		// Fast path: skip normalize if merged already equals sub
-		if (deepEqual(merged, sub)) return true;
+		if (semanticDeepEqual(merged, sub)) return true;
 
 		// Strip vacuously-satisfied `false` properties (see comment above)
 		const strippedBranch = stripVacuousFalseProperties(merged, sub);
-		if (strippedBranch !== merged && deepEqual(strippedBranch, sub)) {
+		if (strippedBranch !== merged && semanticDeepEqual(strippedBranch, sub)) {
 			return true;
 		}
 
 		const normalizedBranch = normalize(strippedBranch);
 		if (
-			deepEqual(normalizedBranch, sub) ||
+			semanticDeepEqual(normalizedBranch, sub) ||
 			engine.isEqual(normalizedBranch, sub)
 		) {
 			return true;
@@ -1515,7 +1521,7 @@ export function checkBranchedSup(
 			}
 			const normalizedMerged = normalize(merged);
 			if (
-				deepEqual(normalizedMerged, sub) ||
+				semanticDeepEqual(normalizedMerged, sub) ||
 				engine.isEqual(normalizedMerged, sub)
 			) {
 				return { isSubset: true, merged, errors: [] };
@@ -1599,14 +1605,14 @@ export function checkAtomic(
 		// Strip vacuously-satisfied `false` properties added by the merge
 		// from sup but absent in sub (vacuous truth: absent ⊆ forbidden).
 		const strippedMerged = stripVacuousFalseProperties(merged, sub);
-		if (strippedMerged !== merged && deepEqual(strippedMerged, sub)) {
+		if (strippedMerged !== merged && semanticDeepEqual(strippedMerged, sub)) {
 			return { isSubset: true, merged: strippedMerged, errors: [] };
 		}
 
 		const normalizedMerged = normalize(strippedMerged);
 
 		if (
-			deepEqual(normalizedMerged, sub) ||
+			semanticDeepEqual(normalizedMerged, sub) ||
 			engine.isEqual(normalizedMerged, sub)
 		) {
 			return { isSubset: true, merged: normalizedMerged, errors: [] };
