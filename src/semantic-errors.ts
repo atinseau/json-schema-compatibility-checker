@@ -1440,29 +1440,34 @@ export function computeSemanticErrors(
 	const expectedStr = formatSchemaType(supSchema);
 	const receivedStr = formatSchemaType(subSchema);
 	if (expectedStr !== receivedStr) {
-		// Do not report type_mismatch when:
-		//   - sub has an enum (formatting as "active or pending")
-		//   - sup has a `not` constraint that is confirmed satisfied (notResult === true)
-		//   - the base types are compatible
-		//
-		// In this scenario the only source of incompatibility was the `not` keyword,
-		// which is confirmed to be satisfied by sub's enum values. The textual
-		// representations differ ("active or pending" vs "string") solely because
-		// formatSchemaType renders enum values rather than their declared type —
-		// there is no actual semantic incompatibility.
-		const supNotSatisfied =
-			hasOwn(supSchema, "not") &&
-			isPlainObj(supSchema.not) &&
-			isNotSatisfied(subSchema, supSchema) === true;
+		// `formatSchemaType` is a display function that prioritises `const` and
+		// `enum` over `type`.  This means two type-compatible schemas can format
+		// to different strings (e.g. "hello" vs "string", "a or b" vs "string",
+		// "integer" vs "number").  We suppress the fallback error when the string
+		// difference is purely cosmetic — i.e. caused by a known formatting
+		// asymmetry while the underlying types are compatible.
+		const subEffective = getEffectiveType(subSchema);
+		const supEffective = getEffectiveType(supSchema);
+		const typesCompat =
+			subEffective !== undefined &&
+			supEffective !== undefined &&
+			typesAreCompatible(subEffective, supEffective);
 
-		const isEnumCompatibleWithSupNot =
-			Array.isArray(subSchema.enum) &&
-			supSchema.type !== undefined &&
-			subSchema.type !== undefined &&
-			typesAreCompatible(subSchema.type, supSchema.type) &&
-			supNotSatisfied;
+		const isFormattingCosmetic =
+			// 1. sub has `const` → formatted as literal value instead of type name
+			(hasOwn(subSchema, "const") && typesCompat) ||
+			// 2. sub has `enum` but sup does not → formatted as "a or b" instead
+			//    of type name.  When sup ALSO has enum/const the diff is real.
+			(Array.isArray(subSchema.enum) &&
+				!Array.isArray(supSchema.enum) &&
+				!hasOwn(supSchema, "const") &&
+				typesCompat) ||
+			// 3. "integer" vs "number" are compatible but different strings
+			(subEffective !== supEffective &&
+				typesCompat &&
+				(subEffective === "integer" || supEffective === "integer"));
 
-		if (!isEnumCompatibleWithSupNot) {
+		if (!isFormattingCosmetic) {
 			errors.push({
 				type: SchemaErrorType.TypeMismatch,
 				key: path || "$root",
